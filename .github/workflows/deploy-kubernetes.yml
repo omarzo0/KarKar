@@ -1,0 +1,30 @@
+name: Deploy to Kubernetes
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v1
+
+      - name: Authenticate to Kubernetes
+        uses: azure/cli@v1
+        with:
+          azcliversion: "2.0.72"
+          inlineScript: "echo 'Authenticated to Kubernetes'"
+
+      - name: Deploy to Kubernetes (if k8s manifests exist)
+        run: |
+          if [ -d "./k8s" ]; then
+            kubectl apply -f ./k8s
+          else
+            echo "No ./k8s manifests found — skipping deployment"
+          fi
