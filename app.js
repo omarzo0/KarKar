@@ -63,6 +63,9 @@ const userAuthRoutes = require("./src/routes/user/authRoutes");
 const userProfileRoutes = require("./src/routes/user/profileRoutes");
 const userOrderRoutes = require("./src/routes/user/orderRoutes");
 const userCartRoutes = require("./src/routes/user/cartRoutes");
+const userWishlistRoutes = require("./src/routes/user/wishlistRoutes");
+const userShippingRoutes = require("./src/routes/user/shippingRoutes");
+const userReviewRoutes = require("./src/routes/user/reviewRoutes");
 
 // Admin Routes
 const adminAuthRoutes = require("./src/routes/admin/authRoutes");
@@ -70,6 +73,8 @@ const adminDashboardRoutes = require("./src/routes/admin/dashboardRoutes");
 const adminUserRoutes = require("./src/routes/admin/userRoutes");
 const adminProductRoutes = require("./src/routes/admin/productRoutes");
 const adminOrderRoutes = require("./src/routes/admin/orderRoutes");
+const adminShippingRoutes = require("./src/routes/admin/shippingRoutes");
+const adminReviewRoutes = require("./src/routes/admin/reviewRoutes");
 
 // Shared Routes
 const sharedProductRoutes = require("./src/routes/shared/productRoutes");
@@ -83,6 +88,9 @@ app.use("/api/auth", userAuthRoutes);
 app.use("/api/user/profile", userProfileRoutes);
 app.use("/api/user/orders", userOrderRoutes);
 app.use("/api/user/cart", userCartRoutes);
+app.use("/api/user/wishlist", userWishlistRoutes);
+app.use("/api/user/shipping", userShippingRoutes);
+app.use("/api/user/reviews", userReviewRoutes);
 
 // Admin API Routes
 app.use("/api/admin/auth", adminAuthRoutes);
@@ -90,6 +98,8 @@ app.use("/api/admin/dashboard", adminDashboardRoutes);
 app.use("/api/admin/users", adminUserRoutes);
 app.use("/api/admin/products", adminProductRoutes);
 app.use("/api/admin/orders", adminOrderRoutes);
+app.use("/api/admin/shipping", adminShippingRoutes);
+app.use("/api/admin/reviews", adminReviewRoutes);
 
 // Shared API Routes
 app.use("/api/products", sharedProductRoutes);

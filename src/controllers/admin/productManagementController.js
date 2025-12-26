@@ -401,6 +401,7 @@ const createProduct = async (req, res) => {
       tags,
       status = "draft",
       featured = false,
+      discount,
     } = req.body;
 
     // Check if SKU already exists
@@ -443,6 +444,14 @@ const createProduct = async (req, res) => {
       tags: tags || [],
       status,
       featured,
+      discount: discount ? {
+        type: discount.type || "fixed",
+        value: discount.value || 0,
+        discountedPrice: discount.discountedPrice,
+        startDate: discount.startDate,
+        endDate: discount.endDate,
+        isActive: discount.isActive || false,
+      } : undefined,
       createdBy: req.admin.adminId,
     });
 
@@ -525,6 +534,8 @@ const updateProduct = async (req, res) => {
           };
         } else if (key === "seo" && typeof updateData[key] === "object") {
           product.seo = { ...product.seo, ...updateData[key] };
+        } else if (key === "discount" && typeof updateData[key] === "object") {
+          product.discount = { ...product.discount, ...updateData[key] };
         } else {
           product[key] = updateData[key];
         }

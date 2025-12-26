@@ -90,21 +90,41 @@ const addToCart = async (req, res) => {
       });
     }
 
-    if (product.inventory.quantity < quantity) {
-      return res.status(400).json({
-        success: false,
-        message: `Only ${product.inventory.quantity} items available in stock`,
-      });
-    }
-
     // Find or create cart
     let cart = await Cart.findOne({ userId: req.user.userId });
     if (!cart) {
       cart = new Cart({ userId: req.user.userId });
     }
 
+    // Check existing quantity in cart
+    const existingItem = cart.items.find(
+      (item) => item.productId.toString() === productId
+    );
+    const existingQuantity = existingItem ? existingItem.quantity : 0;
+    const totalQuantity = existingQuantity + quantity;
+
+    if (totalQuantity > product.inventory.quantity) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient stock. Only ${product.inventory.quantity} available.`,
+        data: {
+          available: product.inventory.quantity,
+          inCart: existingQuantity,
+          requested: quantity,
+          maxCanAdd: Math.max(0, product.inventory.quantity - existingQuantity),
+        },
+      });
+    }
+
     // Add item to cart
-    cart.addItem(product, quantity);
+    const addResult = cart.addItem(product, quantity);
+    if (!addResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: addResult.message,
+        data: addResult,
+      });
+    }
     await cart.save();
 
     // Populate the cart items
@@ -174,15 +194,20 @@ const updateCartItem = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `Only ${product.inventory.quantity} items available in stock`,
+        data: {
+          available: product.inventory.quantity,
+          requested: quantity,
+        },
       });
     }
 
-    // Update quantity
-    const success = cart.updateQuantity(cartItem.productId, quantity);
-    if (!success) {
+    // Update quantity with actual stock validation
+    const updateResult = cart.updateQuantity(cartItem.productId, quantity, product.inventory.quantity);
+    if (!updateResult.success) {
       return res.status(400).json({
         success: false,
-        message: "Failed to update item quantity",
+        message: updateResult.message,
+        data: updateResult,
       });
     }
 

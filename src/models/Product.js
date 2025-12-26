@@ -32,6 +32,28 @@ const productSchema = new mongoose.Schema({
     default: "active",
   },
   featured: { type: Boolean, default: false },
+  discount: {
+    type: {
+      type: String,
+      enum: ["percentage", "fixed"],
+    },
+    value: { type: Number, default: 0 },
+    discountedPrice: { type: Number },
+    startDate: { type: Date },
+    endDate: { type: Date },
+    isActive: { type: Boolean, default: false },
+  },
+  ratings: {
+    average: { type: Number, default: 0, min: 0, max: 5 },
+    count: { type: Number, default: 0 },
+    distribution: {
+      5: { type: Number, default: 0 },
+      4: { type: Number, default: 0 },
+      3: { type: Number, default: 0 },
+      2: { type: Number, default: 0 },
+      1: { type: Number, default: 0 },
+    },
+  },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },

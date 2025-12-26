@@ -25,6 +25,11 @@ const userSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
   lastLogin: { type: Date, default: Date.now },
   isActive: { type: Boolean, default: true },
+  passwordReset: {
+    token: { type: String },
+    expiresAt: { type: Date },
+    lastRequestedAt: { type: Date },
+  },
 });
 
 userSchema.methods.comparePassword = async function (candidatePassword) {

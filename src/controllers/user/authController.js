@@ -238,11 +238,20 @@ const refreshToken = async (req, res) => {
 // @access  Public
 const forgotPassword = async (req, res) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array(),
+      });
+    }
+
     const { email } = req.body;
 
-    const user = await User.findOne({ email, role: "user" });
+    const user = await User.findOne({ email });
     if (!user) {
-      // Don't reveal if user exists or not
+      // Don't reveal if user exists or not (security)
       return res.json({
         success: true,
         message:
@@ -250,26 +259,52 @@ const forgotPassword = async (req, res) => {
       });
     }
 
-    // Generate reset token
-    const resetToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
-    });
+    // Rate limiting: Check if reset was requested recently (5 min cooldown)
+    if (user.passwordReset?.lastRequestedAt) {
+      const timeSinceLastRequest = Date.now() - new Date(user.passwordReset.lastRequestedAt).getTime();
+      const cooldownPeriod = 5 * 60 * 1000; // 5 minutes
+      
+      if (timeSinceLastRequest < cooldownPeriod) {
+        const remainingTime = Math.ceil((cooldownPeriod - timeSinceLastRequest) / 1000 / 60);
+        return res.status(429).json({
+          success: false,
+          message: `Please wait ${remainingTime} minute(s) before requesting another reset`,
+        });
+      }
+    }
 
-    // In real app: Send email with reset link
-    // For now, just return the token (in production, send via email)
+    // Generate secure reset token (crypto random)
+    const crypto = require("crypto");
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
+
+    // Save hashed token to user
+    user.passwordReset = {
+      token: hashedToken,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+      lastRequestedAt: new Date(),
+    };
+    await user.save();
+
+    // In production: Send email with reset link containing resetToken
+    // const resetUrl = `${process.env.CLIENT_URL}/reset-password?token=${resetToken}`;
+    // await sendEmail({ to: user.email, subject: 'Password Reset', html: `<a href="${resetUrl}">Reset Password</a>` });
+
     res.json({
       success: true,
-      message: "Password reset instructions sent",
+      message: "If an account with that email exists, a reset link has been sent",
+      // DEV ONLY - Remove in production
       data: {
-        resetToken, // In production, don't return this
+        resetToken, // Send unhashed token to user (via email in production)
         expiresIn: "1 hour",
+        note: "In production, this token is sent via email, not in response",
       },
     });
   } catch (error) {
     console.error("Forgot password error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error during password reset",
+      message: "Server error during password reset request",
       error: error.message,
     });
   }
@@ -280,12 +315,27 @@ const forgotPassword = async (req, res) => {
 // @access  Public
 const resetPassword = async (req, res) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array(),
+      });
+    }
+
     const { token, newPassword } = req.body;
 
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Hash the provided token to compare with stored hash
+    const crypto = require("crypto");
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
-    const user = await User.findById(decoded.userId);
+    // Find user with valid reset token
+    const user = await User.findOne({
+      "passwordReset.token": hashedToken,
+      "passwordReset.expiresAt": { $gt: new Date() },
+    });
+
     if (!user) {
       return res.status(400).json({
         success: false,
@@ -296,11 +346,20 @@ const resetPassword = async (req, res) => {
     // Hash new password
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(newPassword, salt);
+    
+    // Clear reset token (single use)
+    user.passwordReset = {
+      token: undefined,
+      expiresAt: undefined,
+      lastRequestedAt: user.passwordReset.lastRequestedAt,
+    };
+    user.updatedAt = new Date();
+    
     await user.save();
 
     res.json({
       success: true,
-      message: "Password reset successfully",
+      message: "Password reset successfully. You can now login with your new password.",
     });
   } catch (error) {
     console.error("Reset password error:", error);

@@ -79,6 +79,15 @@ const cartSchema = new mongoose.Schema({
     zipCode: { type: String },
     country: { type: String },
   },
+  selectedShipping: {
+    shippingFeeId: { type: mongoose.Schema.Types.ObjectId, ref: "ShippingFee" },
+    name: { type: String },
+    fee: { type: Number, default: 0 },
+    estimatedDelivery: {
+      minDays: { type: Number },
+      maxDays: { type: Number },
+    },
+  },
   coupon: {
     code: { type: String },
     discountType: {
@@ -161,18 +170,41 @@ cartSchema.methods.calculateTotals = function () {
 
 // Method to add item to cart
 cartSchema.methods.addItem = function (product, quantity = 1) {
+  const availableStock = product.inventory?.quantity || 0;
   const existingItemIndex = this.items.findIndex(
     (item) => item.productId.toString() === product._id.toString()
   );
 
   if (existingItemIndex > -1) {
-    // Update existing item
-    const newQuantity = this.items[existingItemIndex].quantity + quantity;
-    if (newQuantity <= this.items[existingItemIndex].maxQuantity) {
+    // Update existing item - check against actual stock
+    const currentQuantity = this.items[existingItemIndex].quantity;
+    const newQuantity = currentQuantity + quantity;
+    
+    if (newQuantity <= availableStock) {
       this.items[existingItemIndex].quantity = newQuantity;
+      this.items[existingItemIndex].maxQuantity = availableStock;
+      this.calculateTotals();
+      return { success: true, quantity: newQuantity };
+    } else {
+      return { 
+        success: false, 
+        message: 'Insufficient stock',
+        available: availableStock,
+        inCart: currentQuantity,
+        maxCanAdd: Math.max(0, availableStock - currentQuantity)
+      };
     }
   } else {
-    // Add new item
+    // Add new item - validate against stock
+    if (quantity > availableStock) {
+      return {
+        success: false,
+        message: 'Insufficient stock',
+        available: availableStock,
+        requested: quantity
+      };
+    }
+    
     this.items.push({
       productId: product._id,
       quantity: quantity,
@@ -180,11 +212,12 @@ cartSchema.methods.addItem = function (product, quantity = 1) {
       name: product.name,
       image: product.images?.[0],
       sku: product.sku,
-      maxQuantity: Math.min(product.inventory?.quantity || 10, 10),
+      maxQuantity: availableStock,
     });
+    
+    this.calculateTotals();
+    return { success: true, quantity: quantity };
   }
-
-  this.calculateTotals();
 };
 
 // Method to remove item from cart
@@ -196,17 +229,31 @@ cartSchema.methods.removeItem = function (productId) {
 };
 
 // Method to update item quantity
-cartSchema.methods.updateQuantity = function (productId, quantity) {
+cartSchema.methods.updateQuantity = function (productId, quantity, availableStock = null) {
   const item = this.items.find(
     (item) => item.productId.toString() === productId.toString()
   );
 
-  if (item && quantity > 0 && quantity <= item.maxQuantity) {
-    item.quantity = quantity;
-    this.calculateTotals();
-    return true;
+  if (!item || quantity <= 0) {
+    return { success: false, message: 'Invalid item or quantity' };
   }
-  return false;
+
+  // Use provided stock or fall back to maxQuantity
+  const maxAllowed = availableStock !== null ? availableStock : item.maxQuantity;
+  
+  if (quantity > maxAllowed) {
+    return { 
+      success: false, 
+      message: 'Insufficient stock',
+      available: maxAllowed,
+      requested: quantity
+    };
+  }
+  
+  item.quantity = quantity;
+  item.maxQuantity = maxAllowed; // Update maxQuantity with current stock
+  this.calculateTotals();
+  return { success: true, quantity: quantity };
 };
 
 // Method to clear cart
