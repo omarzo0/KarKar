@@ -10,6 +10,10 @@ const {
   trackOrder,
   requestReturn,
   reorder,
+  createGuestOrder,
+  trackGuestOrder,
+  getOrderTimeline,
+  downloadInvoice,
 } = require("../../controllers/user/orderController");
 
 const {
@@ -18,9 +22,15 @@ const {
   validateCancelOrder,
   validateReturnRequest,
   validateOrderQuery,
+  validateGuestOrder,
+  validateGuestTracking,
 } = require("../../validations/user/orderValidation");
 
-// All routes require user authentication
+// Public routes (no authentication required)
+router.post("/guest", validateGuestOrder, createGuestOrder);
+router.get("/track/:orderNumber", validateGuestTracking, trackGuestOrder);
+
+// Protected routes (require user authentication)
 router.use(userAuth);
 
 router.get("/", validateOrderQuery, getUserOrders);
@@ -33,6 +43,8 @@ router.put(
   cancelOrder
 );
 router.get("/:orderId/track", validateOrderId, trackOrder);
+router.get("/:orderId/timeline", validateOrderId, getOrderTimeline);
+router.get("/:orderId/invoice", validateOrderId, downloadInvoice);
 router.post(
   "/:orderId/return",
   validateOrderId,

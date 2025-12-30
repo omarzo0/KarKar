@@ -33,7 +33,6 @@ const adminAuth = async (req, res, next) => {
 
     req.admin = {
       ...decoded,
-      permissions: admin.permissions,
       profile: admin.profile,
     };
 
@@ -62,36 +61,10 @@ const adminAuth = async (req, res, next) => {
   }
 };
 
-// Permission middleware
-const requirePermission = (permission) => {
-  return (req, res, next) => {
-    if (!req.admin.permissions || !req.admin.permissions[permission]) {
-      return res.status(403).json({
-        success: false,
-        message: `Access denied. Required permission: ${permission}`,
-      });
-    }
-    next();
-  };
-};
-
-// Check permission middleware (alias for requirePermission)
-const checkPermission = (permission) => {
-  return (req, res, next) => {
-    // Super admin has all permissions
-    if (req.admin.role === "superadmin") {
-      return next();
-    }
-    
-    if (!req.admin.permissions || !req.admin.permissions[permission]) {
-      return res.status(403).json({
-        success: false,
-        message: `Access denied. Required permission: ${permission}`,
-      });
-    }
-    next();
-  };
-};
+// Permission middleware (no-op, always allow)
+const requirePermission = () => (req, res, next) => next();
+// Check permission middleware (no-op, always allow)
+const checkPermission = () => (req, res, next) => next();
 
 // Super Admin only middleware
 const isSuperAdmin = async (req, res, next) => {

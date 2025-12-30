@@ -18,7 +18,12 @@ const registerUser = async (req, res) => {
       });
     }
 
-    const { username, email, password, firstName, lastName, phone } = req.body;
+    const { username, email, password, profile } = req.body;
+    
+    // Support both flat and nested profile format
+    const firstName = req.body.firstName || profile?.firstName;
+    const lastName = req.body.lastName || profile?.lastName;
+    const phone = req.body.phone || profile?.phone;
 
     // Check if user already exists
     const existingUser = await User.findOne({
@@ -109,7 +114,7 @@ const loginUser = async (req, res) => {
     const { email, password } = req.body;
 
     // Find user by email
-    const user = await User.findOne({ email, role: "user" }); // Only find users, not admins
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({
         success: false,

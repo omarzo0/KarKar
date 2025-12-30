@@ -851,6 +851,496 @@ const calculateEstimatedDelivery = (orderDate, shippingMethod) => {
   return estimatedDate;
 };
 
+// @desc    Create guest order (no authentication required)
+// @route   POST /api/user/orders/guest
+// @access  Public
+const createGuestOrder = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array(),
+      });
+    }
+
+    const {
+      customerInfo,
+      items,
+      shippingAddress,
+      billingAddress,
+      shippingMethod = "standard",
+      paymentMethod,
+      notes,
+    } = req.body;
+
+    // Validate required guest info
+    if (!customerInfo?.email || !customerInfo?.firstName || !customerInfo?.lastName) {
+      return res.status(400).json({
+        success: false,
+        message: "Customer information is required (email, firstName, lastName)",
+      });
+    }
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Order items are required",
+      });
+    }
+
+    // Validate items and calculate totals
+    const orderItems = [];
+    let subtotal = 0;
+    let outOfStockItems = [];
+
+    for (const item of items) {
+      const product = await Product.findById(item.productId);
+
+      if (!product || product.status !== "active") {
+        outOfStockItems.push({
+          productId: item.productId,
+          name: product?.name || "Unknown Product",
+          reason: "Product no longer available",
+        });
+        continue;
+      }
+
+      if (product.inventory.quantity < item.quantity) {
+        outOfStockItems.push({
+          productId: product._id,
+          name: product.name,
+          reason: `Only ${product.inventory.quantity} available in stock`,
+        });
+        continue;
+      }
+
+      // For package products, also check if all package items are available
+      if (product.productType === "package" && product.packageItems) {
+        for (const pkgItem of product.packageItems) {
+          const pkgProduct = await Product.findById(pkgItem.productId);
+          if (!pkgProduct || pkgProduct.status !== "active") {
+            outOfStockItems.push({
+              productId: product._id,
+              name: product.name,
+              reason: `Package item "${pkgItem.name}" is no longer available`,
+            });
+            break;
+          }
+        }
+      }
+
+      const itemTotal = product.price * item.quantity;
+      subtotal += itemTotal;
+
+      // Build order item
+      const orderItem = {
+        productId: product._id,
+        name: product.name,
+        price: product.price,
+        quantity: item.quantity,
+        subtotal: itemTotal,
+        image: product.images?.[0],
+        sku: product.sku,
+        productType: product.productType || "single",
+      };
+
+      // Add package info if it's a package product
+      if (product.productType === "package") {
+        orderItem.packageInfo = {
+          totalItemsCount: product.packageDetails?.totalItemsCount || 0,
+          originalTotalPrice: product.packageDetails?.originalTotalPrice || 0,
+          savings: product.packageDetails?.savings || 0,
+          savingsPercentage: product.packageDetails?.savingsPercentage || 0,
+          items: product.packageItems?.map(pkgItem => ({
+            productId: pkgItem.productId,
+            name: pkgItem.name,
+            quantity: pkgItem.quantity,
+            price: pkgItem.price,
+            image: pkgItem.image,
+          })) || [],
+        };
+      }
+
+      orderItems.push(orderItem);
+    }
+
+    // Check if any items are out of stock
+    if (outOfStockItems.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Some items are no longer available",
+        data: {
+          outOfStockItems,
+        },
+      });
+    }
+
+    // Calculate totals
+    const shippingFee = calculateShippingFee(shippingMethod, subtotal);
+    const taxAmount = calculateTax(subtotal, shippingAddress.state);
+    const total = subtotal + shippingFee + taxAmount;
+
+    // Generate order number
+    const orderNumber = await generateOrderNumber();
+
+    // Create guest order
+    const order = new Order({
+      orderNumber,
+      isGuestOrder: true,
+      customer: {
+        email: customerInfo.email,
+        firstName: customerInfo.firstName,
+        lastName: customerInfo.lastName,
+        phone: customerInfo.phone,
+      },
+      items: orderItems,
+      totals: {
+        subtotal,
+        tax: taxAmount,
+        shipping: shippingFee,
+        discount: 0,
+        total,
+      },
+      shippingAddress,
+      billingAddress: billingAddress?.useShippingAddress
+        ? shippingAddress
+        : billingAddress,
+      shippingMethod,
+      paymentMethod,
+      notes,
+      status: "pending",
+      paymentStatus: "pending",
+    });
+
+    await order.save();
+
+    // Update product inventory
+    await updateProductInventory(orderItems);
+
+    // Create pending payment record
+    const payment = new Payment({
+      orderId: order._id,
+      paymentMethod,
+      amount: total,
+      currency: "USD",
+      status: "pending",
+      customerEmail: customerInfo.email,
+    });
+    await payment.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Order created successfully",
+      data: {
+        order,
+        payment: {
+          id: payment._id,
+          amount: payment.amount,
+          paymentMethod: payment.paymentMethod,
+        },
+        nextStep: "process_payment",
+        guestOrderTracking: {
+          orderNumber: order.orderNumber,
+          email: customerInfo.email,
+          trackingUrl: `/api/user/orders/track/${order.orderNumber}?email=${customerInfo.email}`,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Create guest order error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while creating order",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Track order by order number (for guests)
+// @route   GET /api/user/orders/track/:orderNumber
+// @access  Public (with email verification)
+const trackGuestOrder = async (req, res) => {
+  try {
+    const { orderNumber } = req.params;
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required to track guest orders",
+      });
+    }
+
+    const order = await Order.findOne({
+      orderNumber: orderNumber.toUpperCase(),
+      "customer.email": email.toLowerCase(),
+    }).select("orderNumber status trackingNumber shippingAddress shippingMethod createdAt updatedAt items totals customer isGuestOrder");
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found. Please check the order number and email.",
+      });
+    }
+
+    // Generate tracking timeline
+    const trackingTimeline = generateTrackingTimeline(order);
+
+    res.json({
+      success: true,
+      data: {
+        order: {
+          orderNumber: order.orderNumber,
+          status: order.status,
+          trackingNumber: order.trackingNumber,
+          shippingMethod: order.shippingMethod,
+          itemsCount: order.items.length,
+          total: order.totals.total,
+          createdAt: order.createdAt,
+          estimatedDelivery: calculateEstimatedDelivery(
+            order.createdAt,
+            order.shippingMethod
+          ),
+        },
+        timeline: trackingTimeline,
+        shippingAddress: {
+          city: order.shippingAddress.city,
+          state: order.shippingAddress.state,
+          zipCode: order.shippingAddress.zipCode,
+        },
+        items: order.items.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          image: item.image,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("Track guest order error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while tracking order",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get detailed order timeline
+// @route   GET /api/user/orders/:orderId/timeline
+// @access  Private (User)
+const getOrderTimeline = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user.userId;
+
+    const order = await Order.findOne({
+      _id: orderId,
+      userId: userId,
+    }).select("orderNumber status trackingNumber statusHistory shippingMethod createdAt updatedAt deliveredAt shippedAt confirmedAt");
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // Build detailed timeline
+    const timeline = [];
+
+    // Order placed
+    timeline.push({
+      status: "placed",
+      title: "Order Placed",
+      description: `Order #${order.orderNumber} has been received`,
+      date: order.createdAt,
+      completed: true,
+      icon: "shopping-cart",
+    });
+
+    // Payment confirmed (if applicable)
+    if (order.paymentStatus === "paid" || ["confirmed", "processing", "shipped", "delivered"].includes(order.status)) {
+      timeline.push({
+        status: "payment",
+        title: "Payment Confirmed",
+        description: "Payment has been successfully processed",
+        date: order.confirmedAt || order.createdAt,
+        completed: true,
+        icon: "credit-card",
+      });
+    }
+
+    // Order confirmed
+    if (["confirmed", "processing", "shipped", "delivered"].includes(order.status)) {
+      timeline.push({
+        status: "confirmed",
+        title: "Order Confirmed",
+        description: "Your order has been confirmed and is being prepared",
+        date: order.confirmedAt || order.createdAt,
+        completed: true,
+        icon: "check-circle",
+      });
+    }
+
+    // Processing
+    if (["processing", "shipped", "delivered"].includes(order.status)) {
+      timeline.push({
+        status: "processing",
+        title: "Processing",
+        description: "Your order is being prepared for shipment",
+        date: order.updatedAt,
+        completed: true,
+        icon: "package",
+      });
+    }
+
+    // Shipped
+    if (["shipped", "delivered"].includes(order.status)) {
+      timeline.push({
+        status: "shipped",
+        title: "Shipped",
+        description: order.trackingNumber 
+          ? `Package shipped with tracking number: ${order.trackingNumber}`
+          : "Your package has been shipped",
+        date: order.shippedAt || order.updatedAt,
+        completed: true,
+        icon: "truck",
+        trackingNumber: order.trackingNumber,
+      });
+    }
+
+    // Out for delivery (if status exists)
+    if (order.status === "out_for_delivery" || order.status === "delivered") {
+      timeline.push({
+        status: "out_for_delivery",
+        title: "Out for Delivery",
+        description: "Your package is out for delivery",
+        date: order.updatedAt,
+        completed: order.status === "delivered",
+        icon: "map-pin",
+      });
+    }
+
+    // Delivered
+    if (order.status === "delivered") {
+      timeline.push({
+        status: "delivered",
+        title: "Delivered",
+        description: "Package has been delivered successfully",
+        date: order.deliveredAt || order.updatedAt,
+        completed: true,
+        icon: "home",
+      });
+    }
+
+    // Add estimated steps for non-delivered orders
+    if (!["delivered", "cancelled", "refunded"].includes(order.status)) {
+      const estimatedDelivery = calculateEstimatedDelivery(order.createdAt, order.shippingMethod);
+      
+      if (order.status !== "shipped") {
+        timeline.push({
+          status: "shipped",
+          title: "Shipping",
+          description: "Estimated shipping date",
+          date: null,
+          completed: false,
+          isEstimate: true,
+          icon: "truck",
+        });
+      }
+
+      timeline.push({
+        status: "delivered",
+        title: "Estimated Delivery",
+        description: `Expected by ${estimatedDelivery.toLocaleDateString()}`,
+        date: estimatedDelivery,
+        completed: false,
+        isEstimate: true,
+        icon: "home",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        orderNumber: order.orderNumber,
+        currentStatus: order.status,
+        timeline,
+        trackingNumber: order.trackingNumber,
+        estimatedDelivery: calculateEstimatedDelivery(order.createdAt, order.shippingMethod),
+      },
+    });
+  } catch (error) {
+    console.error("Get order timeline error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching timeline",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Download order invoice
+// @route   GET /api/user/orders/:orderId/invoice
+// @access  Private (User)
+const downloadInvoice = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user.userId;
+
+    const order = await Order.findOne({
+      _id: orderId,
+      userId: userId,
+    }).populate("items.productId", "name sku");
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // Generate invoice data (could be used to generate PDF)
+    const invoiceData = {
+      invoiceNumber: `INV-${order.orderNumber}`,
+      orderNumber: order.orderNumber,
+      orderDate: order.createdAt,
+      customer: order.customer,
+      shippingAddress: order.shippingAddress,
+      billingAddress: order.billingAddress || order.shippingAddress,
+      items: order.items.map(item => ({
+        name: item.name,
+        sku: item.sku || item.productId?.sku,
+        quantity: item.quantity,
+        price: item.price,
+        subtotal: item.subtotal,
+      })),
+      totals: order.totals,
+      paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus,
+      status: order.status,
+    };
+
+    res.json({
+      success: true,
+      message: "Invoice data retrieved",
+      data: {
+        invoice: invoiceData,
+        downloadUrl: `/api/user/orders/${orderId}/invoice/pdf`, // Future PDF endpoint
+      },
+    });
+  } catch (error) {
+    console.error("Download invoice error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while generating invoice",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getUserOrders,
   getOrderById,
@@ -859,4 +1349,8 @@ module.exports = {
   trackOrder,
   requestReturn,
   reorder,
+  createGuestOrder,
+  trackGuestOrder,
+  getOrderTimeline,
+  downloadInvoice,
 };

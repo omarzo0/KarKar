@@ -476,6 +476,633 @@ const reactivateAccount = async (req, res) => {
   }
 };
 
+// ==================== ADDRESS BOOK MANAGEMENT ====================
+
+// @desc    Get all addresses
+// @route   GET /api/user/profile/addresses
+// @access  Private (User)
+const getAddresses = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select("addresses");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        addresses: user.addresses || [],
+        defaultShipping: user.addresses?.find(a => a.isDefaultShipping)?._id,
+        defaultBilling: user.addresses?.find(a => a.isDefaultBilling)?._id,
+      },
+    });
+  } catch (error) {
+    console.error("Get addresses error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching addresses",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Add new address
+// @route   POST /api/user/profile/addresses
+// @access  Private (User)
+const addAddress = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array(),
+      });
+    }
+
+    const {
+      label,
+      fullName,
+      phone,
+      street,
+      apartment,
+      city,
+      state,
+      zipCode,
+      country,
+      isDefaultShipping,
+      isDefaultBilling,
+    } = req.body;
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // If setting as default, unset other defaults
+    if (isDefaultShipping) {
+      user.addresses.forEach(addr => addr.isDefaultShipping = false);
+    }
+    if (isDefaultBilling) {
+      user.addresses.forEach(addr => addr.isDefaultBilling = false);
+    }
+
+    // If this is the first address, make it default
+    const isFirst = user.addresses.length === 0;
+
+    const newAddress = {
+      label: label || "Home",
+      fullName,
+      phone,
+      street,
+      apartment,
+      city,
+      state,
+      zipCode,
+      country: country || "USA",
+      isDefaultShipping: isFirst || isDefaultShipping || false,
+      isDefaultBilling: isFirst || isDefaultBilling || false,
+    };
+
+    user.addresses.push(newAddress);
+    await user.save();
+
+    const addedAddress = user.addresses[user.addresses.length - 1];
+
+    res.status(201).json({
+      success: true,
+      message: "Address added successfully",
+      data: {
+        address: addedAddress,
+      },
+    });
+  } catch (error) {
+    console.error("Add address error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while adding address",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Update address
+// @route   PUT /api/user/profile/addresses/:addressId
+// @access  Private (User)
+const updateAddress = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array(),
+      });
+    }
+
+    const { addressId } = req.params;
+    const updates = req.body;
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const address = user.addresses.id(addressId);
+    if (!address) {
+      return res.status(404).json({
+        success: false,
+        message: "Address not found",
+      });
+    }
+
+    // If setting as default, unset other defaults
+    if (updates.isDefaultShipping) {
+      user.addresses.forEach(addr => addr.isDefaultShipping = false);
+    }
+    if (updates.isDefaultBilling) {
+      user.addresses.forEach(addr => addr.isDefaultBilling = false);
+    }
+
+    // Update fields
+    Object.keys(updates).forEach(key => {
+      if (updates[key] !== undefined) {
+        address[key] = updates[key];
+      }
+    });
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Address updated successfully",
+      data: {
+        address,
+      },
+    });
+  } catch (error) {
+    console.error("Update address error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while updating address",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Delete address
+// @route   DELETE /api/user/profile/addresses/:addressId
+// @access  Private (User)
+const deleteAddress = async (req, res) => {
+  try {
+    const { addressId } = req.params;
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const address = user.addresses.id(addressId);
+    if (!address) {
+      return res.status(404).json({
+        success: false,
+        message: "Address not found",
+      });
+    }
+
+    const wasDefaultShipping = address.isDefaultShipping;
+    const wasDefaultBilling = address.isDefaultBilling;
+
+    address.deleteOne();
+
+    // If deleted address was default, set first remaining as default
+    if (user.addresses.length > 0) {
+      if (wasDefaultShipping && !user.addresses.some(a => a.isDefaultShipping)) {
+        user.addresses[0].isDefaultShipping = true;
+      }
+      if (wasDefaultBilling && !user.addresses.some(a => a.isDefaultBilling)) {
+        user.addresses[0].isDefaultBilling = true;
+      }
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Address deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete address error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while deleting address",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Set default address
+// @route   PUT /api/user/profile/addresses/:addressId/default
+// @access  Private (User)
+const setDefaultAddress = async (req, res) => {
+  try {
+    const { addressId } = req.params;
+    const { type } = req.body; // 'shipping', 'billing', or 'both'
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const address = user.addresses.id(addressId);
+    if (!address) {
+      return res.status(404).json({
+        success: false,
+        message: "Address not found",
+      });
+    }
+
+    // Unset previous defaults and set new one
+    if (type === "shipping" || type === "both") {
+      user.addresses.forEach(addr => addr.isDefaultShipping = false);
+      address.isDefaultShipping = true;
+    }
+    if (type === "billing" || type === "both") {
+      user.addresses.forEach(addr => addr.isDefaultBilling = false);
+      address.isDefaultBilling = true;
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: `Address set as default ${type} address`,
+      data: {
+        address,
+      },
+    });
+  } catch (error) {
+    console.error("Set default address error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while setting default address",
+      error: error.message,
+    });
+  }
+};
+
+// ==================== RECENTLY VIEWED PRODUCTS ====================
+
+// @desc    Get recently viewed products
+// @route   GET /api/user/profile/recently-viewed
+// @access  Private (User)
+const getRecentlyViewed = async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+    const Product = require("../../models/Product");
+
+    const user = await User.findById(req.user.userId)
+      .select("recentlyViewed")
+      .populate({
+        path: "recentlyViewed.productId",
+        select: "name price images slug category status inventory",
+      });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Filter out deleted/inactive products and limit
+    const recentlyViewed = user.recentlyViewed
+      .filter(item => item.productId && item.productId.status === "active")
+      .slice(0, parseInt(limit))
+      .map(item => ({
+        product: item.productId,
+        viewedAt: item.viewedAt,
+      }));
+
+    res.json({
+      success: true,
+      data: {
+        recentlyViewed,
+        count: recentlyViewed.length,
+      },
+    });
+  } catch (error) {
+    console.error("Get recently viewed error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching recently viewed",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Clear recently viewed history
+// @route   DELETE /api/user/profile/recently-viewed
+// @access  Private (User)
+const clearRecentlyViewed = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    user.recentlyViewed = [];
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Recently viewed history cleared",
+    });
+  } catch (error) {
+    console.error("Clear recently viewed error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while clearing recently viewed",
+      error: error.message,
+    });
+  }
+};
+
+// ==================== COMPARE PRODUCTS ====================
+
+// @desc    Get compare list
+// @route   GET /api/user/profile/compare
+// @access  Private (User)
+const getCompareList = async (req, res) => {
+  try {
+    const Product = require("../../models/Product");
+
+    const user = await User.findById(req.user.userId)
+      .select("compareList")
+      .populate({
+        path: "compareList",
+        select: "name price images slug category specifications attributes inventory ratings productType",
+      });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Filter out deleted products
+    const compareList = user.compareList.filter(product => product);
+
+    // Get common attributes for comparison
+    const comparisonData = {
+      products: compareList,
+      count: compareList.length,
+      maxProducts: 4,
+      canAddMore: compareList.length < 4,
+    };
+
+    // Extract all unique specification keys for comparison table
+    if (compareList.length > 0) {
+      const allSpecKeys = new Set();
+      compareList.forEach(product => {
+        if (product.specifications) {
+          Object.keys(product.specifications).forEach(key => allSpecKeys.add(key));
+        }
+      });
+      comparisonData.specificationKeys = Array.from(allSpecKeys);
+    }
+
+    res.json({
+      success: true,
+      data: comparisonData,
+    });
+  } catch (error) {
+    console.error("Get compare list error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching compare list",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Add/Remove product from compare list
+// @route   POST /api/user/profile/compare/:productId
+// @access  Private (User)
+const toggleCompareProduct = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const Product = require("../../models/Product");
+
+    // Verify product exists
+    const product = await Product.findById(productId).select("name");
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const result = await user.toggleCompare(productId);
+
+    res.json({
+      success: true,
+      message: result.added 
+        ? `${product.name} added to compare list`
+        : `${product.name} removed from compare list`,
+      data: {
+        added: result.added,
+        compareCount: user.compareList.length,
+        canAddMore: user.compareList.length < 4,
+      },
+    });
+  } catch (error) {
+    console.error("Toggle compare product error:", error);
+    
+    if (error.message === "Compare list is full (max 4 products)") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Server error while updating compare list",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Clear compare list
+// @route   DELETE /api/user/profile/compare
+// @access  Private (User)
+const clearCompareList = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    user.compareList = [];
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Compare list cleared",
+    });
+  } catch (error) {
+    console.error("Clear compare list error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while clearing compare list",
+      error: error.message,
+    });
+  }
+};
+
+// ==================== ACCOUNT DELETION REQUEST ====================
+
+// @desc    Request account deletion (with grace period)
+// @route   POST /api/user/profile/request-deletion
+// @access  Private (User)
+const requestAccountDeletion = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array(),
+      });
+    }
+
+    const { password, reason } = req.body;
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(400).json({
+        success: false,
+        message: "Password is incorrect",
+      });
+    }
+
+    // Set deletion request with 30-day grace period
+    const scheduledDate = new Date();
+    scheduledDate.setDate(scheduledDate.getDate() + 30);
+
+    user.deletionRequest = {
+      requested: true,
+      requestedAt: new Date(),
+      scheduledDeletion: scheduledDate,
+      reason: reason || "No reason provided",
+    };
+
+    await user.save();
+
+    // TODO: Send email notification about deletion request
+
+    res.json({
+      success: true,
+      message: "Account deletion requested. Your account will be deleted in 30 days.",
+      data: {
+        scheduledDeletion: scheduledDate,
+        canCancel: true,
+      },
+    });
+  } catch (error) {
+    console.error("Request account deletion error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while requesting deletion",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Cancel account deletion request
+// @route   DELETE /api/user/profile/request-deletion
+// @access  Private (User)
+const cancelDeletionRequest = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!user.deletionRequest?.requested) {
+      return res.status(400).json({
+        success: false,
+        message: "No pending deletion request found",
+      });
+    }
+
+    user.deletionRequest = {
+      requested: false,
+      requestedAt: null,
+      scheduledDeletion: null,
+      reason: null,
+    };
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Account deletion request cancelled",
+    });
+  } catch (error) {
+    console.error("Cancel deletion request error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while cancelling deletion",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getUserProfile,
   updateUserProfile,
@@ -485,4 +1112,20 @@ module.exports = {
   deleteAccount,
   getUserActivity,
   reactivateAccount,
+  // Address book
+  getAddresses,
+  addAddress,
+  updateAddress,
+  deleteAddress,
+  setDefaultAddress,
+  // Recently viewed
+  getRecentlyViewed,
+  clearRecentlyViewed,
+  // Compare products
+  getCompareList,
+  toggleCompareProduct,
+  clearCompareList,
+  // Account deletion
+  requestAccountDeletion,
+  cancelDeletionRequest,
 };

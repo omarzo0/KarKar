@@ -154,15 +154,6 @@ const validateCreateProduct = [
     .isLength({ max: 160 })
     .withMessage("Meta description cannot exceed 160 characters"),
 
-  body("seo.slug")
-    .optional()
-    .isLength({ max: 200 })
-    .withMessage("Slug cannot exceed 200 characters")
-    .matches(/^[a-z0-9-]+$/)
-    .withMessage(
-      "Slug can only contain lowercase letters, numbers, and hyphens"
-    ),
-
   body("discount.type")
     .optional()
     .isIn(["percentage", "fixed"])

@@ -7,7 +7,6 @@ const { optionalAuth } = require("../../middleware/userAuth");
 // Import validation middleware
 const {
   validateCreateProduct,
-  validateUpdateProduct,
   validateProductId,
   validateProductQuery,
   validateBulkOperation,
@@ -18,24 +17,35 @@ const {
 const {
   getAllProducts,
   getProductById,
-  getProductBySlug,
   createProduct,
-  updateProduct,
   deleteProduct,
   bulkProductOperation,
   updateProductInventory,
   getFeaturedProducts,
   getProductsByCategory,
   searchProducts,
+  getSearchSuggestions,
+  getPackages,
+  getFiltersData,
+  recordProductView,
+  getStockAvailability,
+  estimateShipping,
 } = require("../../controllers/shared/productController");
 
 // Public routes (no authentication required)
 router.get("/", optionalAuth, validateProductQuery, getAllProducts);
 router.get("/featured", getFeaturedProducts);
 router.get("/search", searchProducts);
+router.get("/search/suggestions", getSearchSuggestions);
+router.get("/packages", getPackages);
+router.get("/filters", getFiltersData);
 router.get("/category/:category", getProductsByCategory);
-router.get("/slug/:slug", getProductBySlug);
 router.get("/:productId", optionalAuth, validateProductId, getProductById);
+router.get("/:productId/stock", validateProductId, getStockAvailability);
+router.post("/:productId/estimate-shipping", validateProductId, estimateShipping);
+
+// Optional auth route (tracks user views if logged in)
+router.post("/:productId/view", optionalAuth, validateProductId, recordProductView);
 
 // Protected Admin routes
 router.post(
@@ -44,14 +54,6 @@ router.post(
   requirePermission("canManageProducts"),
   validateCreateProduct,
   createProduct
-);
-router.put(
-  "/:productId",
-  adminAuth,
-  requirePermission("canManageProducts"),
-  validateProductId,
-  validateUpdateProduct,
-  updateProduct
 );
 router.delete(
   "/:productId",

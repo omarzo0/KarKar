@@ -161,7 +161,7 @@ const getProductById = async (req, res) => {
     if (product.productType === "package") {
       product = await Product.findById(productId).populate({
         path: "packageItems.productId",
-        select: "name price images inventory status seo.slug",
+        select: "name price images inventory status",
       });
     }
 
@@ -172,7 +172,7 @@ const getProductById = async (req, res) => {
       _id: { $ne: productId },
     })
       .limit(4)
-      .select("name price images slug productType packageDetails");
+      .select("name price images productType packageDetails");
 
     res.json({
       success: true,
@@ -191,54 +191,7 @@ const getProductById = async (req, res) => {
   }
 };
 
-// @desc    Get product by slug
-// @route   GET /api/products/slug/:slug
-// @access  Public
-const getProductBySlug = async (req, res) => {
-  try {
-    const { slug } = req.params;
 
-    const product = await Product.findOne({
-      "seo.slug": slug,
-      status: "active",
-    });
-
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
-
-    // Increment view count (you might want to track this differently)
-    product.views = (product.views || 0) + 1;
-    await product.save();
-
-    // Get related products
-    const relatedProducts = await Product.find({
-      category: product.category,
-      status: "active",
-      _id: { $ne: product._id },
-    })
-      .limit(4)
-      .select("name price images slug");
-
-    res.json({
-      success: true,
-      data: {
-        product,
-        relatedProducts,
-      },
-    });
-  } catch (error) {
-    console.error("Get product by slug error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while fetching product",
-      error: error.message,
-    });
-  }
-};
 
 // @desc    Create new product
 // @route   POST /api/products
@@ -259,13 +212,7 @@ const createProduct = async (req, res) => {
       createdBy: req.admin.adminId,
     };
 
-    // Generate slug from name if not provided
-    if (!productData.seo?.slug) {
-      productData.seo = {
-        ...productData.seo,
-        slug: generateSlug(productData.name),
-      };
-    }
+
 
     const product = new Product(productData);
     await product.save();
@@ -560,7 +507,7 @@ const getFeaturedProducts = async (req, res) => {
     })
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
-      .select("name price images slug category specifications");
+      .select("name price images category specifications");
 
     res.json({
       success: true,
@@ -593,7 +540,7 @@ const getProductsByCategory = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit)
-      .select("name price images slug category specifications");
+      .select("name price images category specifications");
 
     const totalProducts = await Product.countDocuments({
       category: { $regex: category, $options: "i" },
@@ -649,7 +596,7 @@ const searchProducts = async (req, res) => {
       ],
     })
       .limit(parseInt(limit))
-      .select("name price images slug category");
+      .select("name price images category");
 
     res.json({
       success: true,
@@ -669,6 +616,372 @@ const searchProducts = async (req, res) => {
   }
 };
 
+// @desc    Get search suggestions (auto-complete)
+// @route   GET /api/products/search/suggestions
+// @access  Public
+const getSearchSuggestions = async (req, res) => {
+  try {
+    const { q, limit = 8 } = req.query;
+
+    if (!q || q.length < 2) {
+      return res.json({
+        success: true,
+        data: { suggestions: [], products: [] },
+      });
+    }
+
+    // Get product name suggestions
+    const products = await Product.find({
+      status: "active",
+      name: { $regex: q, $options: "i" },
+    })
+      .limit(parseInt(limit))
+      .select("name images price category");
+
+    // Get category suggestions
+    const categories = await Product.distinct("category", {
+      status: "active",
+      category: { $regex: q, $options: "i" },
+    });
+
+    // Get brand suggestions
+    const brands = await Product.distinct("specifications.brand", {
+      status: "active",
+      "specifications.brand": { $regex: q, $options: "i" },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        products,
+        categories: categories.slice(0, 5),
+        brands: brands.slice(0, 5),
+        searchQuery: q,
+      },
+    });
+  } catch (error) {
+    console.error("Get search suggestions error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching suggestions",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get all packages/bundles
+// @route   GET /api/products/packages
+// @access  Public
+const getPackages = async (req, res) => {
+  try {
+    const { page = 1, limit = 12, sortBy = "createdAt", sortOrder = "desc" } = req.query;
+
+    const sortConfig = {};
+    sortConfig[sortBy] = sortOrder === "asc" ? 1 : -1;
+
+    const packages = await Product.find({
+      productType: "package",
+      status: "active",
+    })
+      .populate({
+        path: "packageItems.productId",
+        select: "name price images inventory status",
+      })
+      .sort(sortConfig)
+      .limit(parseInt(limit))
+      .skip((page - 1) * limit)
+      .select("-__v");
+
+    const totalPackages = await Product.countDocuments({
+      productType: "package",
+      status: "active",
+    });
+
+    res.json({
+      success: true,
+      data: {
+        packages,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(totalPackages / limit),
+          totalPackages,
+          hasNext: page * limit < totalPackages,
+          hasPrev: page > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Get packages error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching packages",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get advanced filters data
+// @route   GET /api/products/filters
+// @access  Public
+const getFiltersData = async (req, res) => {
+  try {
+    const { category } = req.query;
+
+    const baseFilter = { status: "active" };
+    if (category) {
+      baseFilter.category = { $regex: category, $options: "i" };
+    }
+
+    // Get all filter options in parallel
+    const [categories, brands, priceRange, attributes] = await Promise.all([
+      // Categories with count
+      Product.aggregate([
+        { $match: { status: "active" } },
+        { $group: { _id: "$category", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      // Brands with count
+      Product.aggregate([
+        { $match: baseFilter },
+        { $group: { _id: "$specifications.brand", count: { $sum: 1 } } },
+        { $match: { _id: { $ne: null } } },
+        { $sort: { count: -1 } },
+      ]),
+      // Price range
+      Product.aggregate([
+        { $match: baseFilter },
+        {
+          $group: {
+            _id: null,
+            minPrice: { $min: "$price" },
+            maxPrice: { $max: "$price" },
+            avgPrice: { $avg: "$price" },
+          },
+        },
+      ]),
+      // Product attributes (colors, sizes, etc.)
+      Product.aggregate([
+        { $match: baseFilter },
+        { $unwind: { path: "$attributes", preserveNullAndEmptyArrays: false } },
+        {
+          $group: {
+            _id: "$attributes.name",
+            values: { $addToSet: "$attributes.value" },
+          },
+        },
+      ]),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        categories: categories.map(c => ({ name: c._id, count: c.count })),
+        brands: brands.map(b => ({ name: b._id, count: b.count })),
+        priceRange: priceRange[0] || { minPrice: 0, maxPrice: 1000, avgPrice: 500 },
+        attributes,
+        stockOptions: [
+          { value: "in_stock", label: "In Stock" },
+          { value: "out_of_stock", label: "Out of Stock" },
+        ],
+        sortOptions: [
+          { value: "newest", label: "Newest First" },
+          { value: "price_low", label: "Price: Low to High" },
+          { value: "price_high", label: "Price: High to Low" },
+          { value: "popular", label: "Most Popular" },
+          { value: "rating", label: "Highest Rated" },
+        ],
+      },
+    });
+  } catch (error) {
+    console.error("Get filters data error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching filters",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Record product view (for recently viewed)
+// @route   POST /api/products/:productId/view
+// @access  Private (optional)
+const recordProductView = async (req, res) => {
+  try {
+    const { productId } = req.params;
+
+    // Increment view count on product
+    const product = await Product.findByIdAndUpdate(
+      productId,
+      { $inc: { views: 1 } },
+      { new: true }
+    ).select("name views");
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    // If user is logged in, add to their recently viewed
+    if (req.user) {
+      const User = require("../../models/User");
+      const user = await User.findById(req.user.userId);
+      if (user) {
+        await user.addRecentlyViewed(productId);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: "Product view recorded",
+      data: { views: product.views },
+    });
+  } catch (error) {
+    console.error("Record product view error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while recording view",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get stock availability for product
+// @route   GET /api/products/:productId/stock
+// @access  Public
+const getStockAvailability = async (req, res) => {
+  try {
+    const { productId } = req.params;
+
+    const product = await Product.findById(productId)
+      .select("name inventory status productType packageItems");
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    let stockInfo = {
+      productId: product._id,
+      name: product.name,
+      inStock: product.inventory.quantity > 0,
+      quantity: product.inventory.quantity,
+      lowStock: product.inventory.quantity <= (product.inventory.lowStockAlert || 10),
+      status: product.status,
+    };
+
+    // For package products, check all items
+    if (product.productType === "package" && product.packageItems) {
+      const packageItemsStock = await Promise.all(
+        product.packageItems.map(async (item) => {
+          const itemProduct = await Product.findById(item.productId)
+            .select("name inventory status");
+          return {
+            productId: item.productId,
+            name: item.name,
+            inStock: itemProduct ? itemProduct.inventory.quantity >= item.quantity : false,
+            available: itemProduct?.inventory.quantity || 0,
+            required: item.quantity,
+          };
+        })
+      );
+
+      stockInfo.packageItems = packageItemsStock;
+      stockInfo.allItemsAvailable = packageItemsStock.every(item => item.inStock);
+    }
+
+    res.json({
+      success: true,
+      data: stockInfo,
+    });
+  } catch (error) {
+    console.error("Get stock availability error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while checking stock",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Estimate shipping for product
+// @route   POST /api/products/:productId/estimate-shipping
+// @access  Public
+const estimateShipping = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { zipCode, quantity = 1 } = req.body;
+
+    const product = await Product.findById(productId).select("name price weight dimensions");
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    // Get shipping methods from ShippingFee model
+    const ShippingFee = require("../../models/ShippingFee");
+    const shippingMethods = await ShippingFee.find({ isActive: true });
+
+    const estimates = shippingMethods.map(method => {
+      let baseFee = method.baseFee || 0;
+      const itemTotal = product.price * quantity;
+
+      // Free shipping threshold
+      if (method.freeShippingThreshold && itemTotal >= method.freeShippingThreshold) {
+        baseFee = 0;
+      }
+
+      // Calculate estimated delivery
+      const now = new Date();
+      const minDays = method.estimatedDays?.min || 3;
+      const maxDays = method.estimatedDays?.max || 7;
+      const minDate = new Date(now.getTime() + minDays * 24 * 60 * 60 * 1000);
+      const maxDate = new Date(now.getTime() + maxDays * 24 * 60 * 60 * 1000);
+
+      return {
+        methodId: method._id,
+        name: method.name,
+        description: method.description,
+        fee: baseFee,
+        isFree: baseFee === 0,
+        estimatedDelivery: {
+          minDays,
+          maxDays,
+          minDate: minDate.toISOString().split("T")[0],
+          maxDate: maxDate.toISOString().split("T")[0],
+        },
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        product: {
+          id: product._id,
+          name: product.name,
+          price: product.price,
+          quantity,
+        },
+        zipCode,
+        shippingOptions: estimates,
+      },
+    });
+  } catch (error) {
+    console.error("Estimate shipping error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while estimating shipping",
+      error: error.message,
+    });
+  }
+};
+
 // Helper function to generate slug
 const generateSlug = (name) => {
   return name
@@ -682,7 +995,6 @@ const generateSlug = (name) => {
 module.exports = {
   getAllProducts,
   getProductById,
-  getProductBySlug,
   createProduct,
   updateProduct,
   deleteProduct,
@@ -691,4 +1003,10 @@ module.exports = {
   getFeaturedProducts,
   getProductsByCategory,
   searchProducts,
+  getSearchSuggestions,
+  getPackages,
+  getFiltersData,
+  recordProductView,
+  getStockAvailability,
+  estimateShipping,
 };

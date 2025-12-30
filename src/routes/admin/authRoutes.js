@@ -6,7 +6,6 @@ const {
 } = require("../../middleware/adminAuth");
 
 const {
-  registerAdmin,
   loginAdmin,
   getAdminProfile,
   updateAdminProfile,
@@ -16,7 +15,6 @@ const {
 } = require("../../controllers/admin/authController");
 
 const {
-  validateAdminRegister,
   validateAdminLogin,
   validateAdminUpdateProfile,
   validateAdminChangePassword,
@@ -26,13 +24,6 @@ const {
 router.post("/login", validateAdminLogin, loginAdmin);
 
 // Protected routes
-router.post(
-  "/register",
-  adminAuth,
-  requirePermission("canManageAdmins"),
-  validateAdminRegister,
-  registerAdmin
-);
 router.get("/profile", adminAuth, getAdminProfile);
 router.put(
   "/profile",

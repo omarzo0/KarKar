@@ -2,11 +2,13 @@ const mongoose = require("mongoose");
 
 const orderSchema = new mongoose.Schema({
   orderNumber: { type: String, required: true, unique: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  isGuestOrder: { type: Boolean, default: false },
   customer: {
     email: { type: String, required: true },
     firstName: { type: String, required: true },
     lastName: { type: String, required: true },
+    phone: { type: String },
   },
   items: [
     {
@@ -113,8 +115,16 @@ const orderSchema = new mongoose.Schema({
   // Payment method
   paymentMethod: { type: String },
   
+  // Timestamps for tracking
+  confirmedAt: { type: Date },
+  shippedAt: { type: Date },
+  deliveredAt: { type: Date },
+  
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
+
+// Index for guest order tracking
+orderSchema.index({ orderNumber: 1, "customer.email": 1 });
 
 module.exports = mongoose.model("Order", orderSchema);

@@ -128,10 +128,118 @@ const validateOrderQuery = [
     .withMessage("Sort order must be 'asc' or 'desc'"),
 ];
 
+// Guest order validation
+const validateGuestOrder = [
+  body("customerInfo.email")
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Please provide a valid email")
+    .normalizeEmail(),
+
+  body("customerInfo.firstName")
+    .notEmpty()
+    .withMessage("First name is required")
+    .isLength({ min: 2, max: 50 })
+    .withMessage("First name must be between 2 and 50 characters")
+    .trim(),
+
+  body("customerInfo.lastName")
+    .notEmpty()
+    .withMessage("Last name is required")
+    .isLength({ min: 2, max: 50 })
+    .withMessage("Last name must be between 2 and 50 characters")
+    .trim(),
+
+  body("customerInfo.phone")
+    .optional()
+    .isMobilePhone()
+    .withMessage("Please provide a valid phone number"),
+
+  body("items")
+    .isArray({ min: 1 })
+    .withMessage("At least one item is required"),
+
+  body("items.*.productId")
+    .isMongoId()
+    .withMessage("Valid product ID is required"),
+
+  body("items.*.quantity")
+    .isInt({ min: 1 })
+    .withMessage("Quantity must be at least 1"),
+
+  body("shippingAddress.fullName")
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage("Full name cannot exceed 100 characters"),
+
+  body("shippingAddress.street")
+    .notEmpty()
+    .withMessage("Street address is required")
+    .isLength({ max: 255 })
+    .withMessage("Street address cannot exceed 255 characters"),
+
+  body("shippingAddress.city")
+    .notEmpty()
+    .withMessage("City is required")
+    .isLength({ max: 100 })
+    .withMessage("City cannot exceed 100 characters"),
+
+  body("shippingAddress.state")
+    .notEmpty()
+    .withMessage("State is required")
+    .isLength({ max: 100 })
+    .withMessage("State cannot exceed 100 characters"),
+
+  body("shippingAddress.zipCode")
+    .notEmpty()
+    .withMessage("Zip code is required")
+    .isPostalCode("any")
+    .withMessage("Please provide a valid zip code"),
+
+  body("shippingAddress.country")
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage("Country cannot exceed 100 characters"),
+
+  body("shippingMethod")
+    .optional()
+    .isIn(["standard", "express", "overnight"])
+    .withMessage("Invalid shipping method"),
+
+  body("paymentMethod")
+    .notEmpty()
+    .withMessage("Payment method is required")
+    .isIn(["credit_card", "debit_card", "paypal", "bank_transfer", "cod"])
+    .withMessage("Invalid payment method"),
+
+  body("notes")
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage("Order notes cannot exceed 500 characters"),
+];
+
+const validateGuestTracking = [
+  param("orderNumber")
+    .notEmpty()
+    .withMessage("Order number is required")
+    .isLength({ min: 10, max: 30 })
+    .withMessage("Invalid order number format"),
+
+  query("email")
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Please provide a valid email")
+    .normalizeEmail(),
+];
+
 module.exports = {
   validateCreateOrder,
   validateOrderId,
   validateCancelOrder,
   validateReturnRequest,
   validateOrderQuery,
+  validateGuestOrder,
+  validateGuestTracking,
 };

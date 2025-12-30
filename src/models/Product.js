@@ -24,14 +24,14 @@ const productSchema = new mongoose.Schema({
   description: { type: String, required: true },
   category: { type: String, required: true },
   subcategory: { type: String },
-  
+
   // Product Type: single product or package bundle
   productType: {
     type: String,
     enum: ["single", "package"],
     default: "single",
   },
-  
+
   // Package-specific fields (only used when productType is "package")
   packageItems: [packageItemSchema],
   packageDetails: {
@@ -40,7 +40,7 @@ const productSchema = new mongoose.Schema({
     savings: { type: Number, default: 0 }, // How much customer saves
     savingsPercentage: { type: Number, default: 0 },
   },
-  
+
   price: { type: Number, required: true },
   comparePrice: { type: Number },
   cost: { type: Number },
@@ -59,7 +59,6 @@ const productSchema = new mongoose.Schema({
   seo: {
     metaTitle: { type: String },
     metaDescription: { type: String },
-    slug: { type: String, unique: true },
   },
   tags: [{ type: String }],
   status: {

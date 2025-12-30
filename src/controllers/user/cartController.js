@@ -352,8 +352,9 @@ const applyCoupon = async (req, res) => {
     }
 
     const { couponCode } = req.body;
+    const userId = req.user.userId;
 
-    const cart = await Cart.findOne({ userId: req.user.userId });
+    const cart = await Cart.findOne({ userId }).populate("items.productId");
     if (!cart) {
       return res.status(404).json({
         success: false,
@@ -369,9 +370,17 @@ const applyCoupon = async (req, res) => {
       });
     }
 
-    // In a real application, you would validate the coupon against a database
-    // For now, we'll simulate coupon validation
-    const coupon = await validateCoupon(couponCode, cart.summary.totalPrice);
+    // Prepare cart items for validation
+    const cartItems = cart.items.map(item => ({
+      productId: item.productId._id,
+      name: item.productId.name,
+      price: item.productId.price,
+      quantity: item.quantity,
+      category: item.productId.category,
+    }));
+
+    // Validate coupon using the Coupon model
+    const coupon = await validateCoupon(couponCode, cart.summary.totalPrice, userId, cartItems);
     if (!coupon.valid) {
       return res.status(400).json({
         success: false,
@@ -381,9 +390,12 @@ const applyCoupon = async (req, res) => {
 
     // Apply coupon to cart
     cart.coupon = {
-      code: couponCode,
+      code: couponCode.toUpperCase(),
+      couponId: coupon.couponId,
       discountType: coupon.discountType,
       discountValue: coupon.discountValue,
+      calculatedDiscount: coupon.calculatedDiscount,
+      freeShipping: coupon.freeShipping || false,
       minOrderValue: coupon.minOrderValue,
     };
 
@@ -393,10 +405,16 @@ const applyCoupon = async (req, res) => {
 
     res.json({
       success: true,
-      message: "Coupon applied successfully",
+      message: coupon.message,
       data: {
         cart,
-        discount: coupon.discountValue,
+        coupon: {
+          code: couponCode.toUpperCase(),
+          discountType: coupon.discountType,
+          discountValue: coupon.discountValue,
+          calculatedDiscount: coupon.calculatedDiscount,
+          freeShipping: coupon.freeShipping,
+        },
       },
     });
   } catch (error) {
@@ -553,48 +571,42 @@ const updateCartNotes = async (req, res) => {
   }
 };
 
-// Helper function to validate coupon (simulated)
-const validateCoupon = async (couponCode, cartTotal) => {
-  // In a real application, you would query a coupons collection
-  const coupons = {
-    WELCOME10: {
-      discountType: "percentage",
-      discountValue: 10,
-      minOrderValue: 50,
-      valid: true,
-    },
-    SAVE20: {
-      discountType: "fixed",
-      discountValue: 20,
-      minOrderValue: 100,
-      valid: true,
-    },
-    FREESHIP: {
-      discountType: "shipping",
-      discountValue: 0,
-      minOrderValue: 75,
-      valid: true,
-    },
-  };
-
-  const coupon = coupons[couponCode.toUpperCase()];
-
-  if (!coupon) {
-    return { valid: false, message: "Invalid coupon code" };
-  }
-
-  if (!coupon.valid) {
-    return { valid: false, message: "Coupon is no longer valid" };
-  }
-
-  if (cartTotal < coupon.minOrderValue) {
+// Helper function to validate coupon (using Coupon model)
+const validateCoupon = async (couponCode, cartTotal, userId, cartItems = []) => {
+  try {
+    const Coupon = require("../../models/Coupon");
+    
+    // Find valid coupon by code
+    const coupon = await Coupon.findValidByCode(couponCode);
+    
+    if (!coupon) {
+      return { valid: false, message: "Invalid or expired coupon code" };
+    }
+    
+    // Check if coupon can be used by this user
+    const canUse = await coupon.canBeUsedBy(userId, cartTotal, cartItems);
+    if (!canUse.valid) {
+      return { valid: false, message: canUse.message };
+    }
+    
+    // Calculate discount
+    const discountInfo = coupon.calculateDiscount(cartTotal, cartItems);
+    
     return {
-      valid: false,
-      message: `Minimum order value of $${coupon.minOrderValue} required for this coupon`,
+      valid: true,
+      message: "Coupon applied successfully",
+      couponId: coupon._id,
+      discountType: coupon.discountType,
+      discountValue: coupon.discountValue,
+      calculatedDiscount: discountInfo.discount,
+      freeShipping: discountInfo.freeShipping,
+      minOrderValue: coupon.minimumPurchase,
+      maxDiscountAmount: coupon.maxDiscountAmount,
     };
+  } catch (error) {
+    console.error("Coupon validation error:", error);
+    return { valid: false, message: "Error validating coupon" };
   }
-
-  return { ...coupon, valid: true, message: "Coupon applied successfully" };
 };
 
 // Helper function to calculate shipping fee (simplified)

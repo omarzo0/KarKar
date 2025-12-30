@@ -3,97 +3,6 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { validationResult } = require("express-validator");
 
-// @desc    Register a new admin (Super Admin only)
-// @route   POST /api/admin/auth/register
-// @access  Private (Super Admin)
-const registerAdmin = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array(),
-      });
-    }
-
-    const {
-      username,
-      email,
-      password,
-      firstName,
-      lastName,
-      phone,
-      permissions,
-    } = req.body;
-
-    // Check if admin already exists
-    const existingAdmin = await Admin.findOne({
-      $or: [{ email }, { username }],
-    });
-
-    if (existingAdmin) {
-      return res.status(400).json({
-        success: false,
-        message: "Admin already exists with this email or username",
-      });
-    }
-
-    // Hash password
-    const salt = await bcrypt.genSalt(12); // Stronger salt for admin
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    // Create admin
-    const admin = new Admin({
-      username,
-      email,
-      password: hashedPassword,
-      profile: {
-        firstName,
-        lastName,
-        phone,
-      },
-      permissions: permissions || {
-        canManageUsers: false,
-        canManageProducts: false,
-        canManageOrders: false,
-        canManageInventory: false,
-        canViewAnalytics: false,
-        canManagePayments: false,
-      },
-    });
-
-    await admin.save();
-
-    // Remove password from response
-    const adminResponse = {
-      _id: admin._id,
-      username: admin.username,
-      email: admin.email,
-      profile: admin.profile,
-      permissions: admin.permissions,
-      role: admin.role,
-      isActive: admin.isActive,
-      createdAt: admin.createdAt,
-    };
-
-    res.status(201).json({
-      success: true,
-      message: "Admin registered successfully",
-      data: {
-        admin: adminResponse,
-      },
-    });
-  } catch (error) {
-    console.error("Admin register error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error during admin registration",
-      error: error.message,
-    });
-  }
-};
-
 // @desc    Login admin
 // @route   POST /api/admin/auth/login
 // @access  Public
@@ -381,7 +290,6 @@ const refreshToken = async (req, res) => {
 };
 
 module.exports = {
-  registerAdmin,
   loginAdmin,
   getAdminProfile,
   updateAdminProfile,

@@ -115,10 +115,177 @@ const validateReactivateAccount = [
   body("token").notEmpty().withMessage("Reactivation token is required"),
 ];
 
+// Address book validations
+const validateAddAddress = [
+  body("label")
+    .optional()
+    .isLength({ max: 50 })
+    .withMessage("Label cannot exceed 50 characters")
+    .trim(),
+
+  body("fullName")
+    .notEmpty()
+    .withMessage("Full name is required")
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Full name must be between 2 and 100 characters")
+    .trim(),
+
+  body("phone")
+    .notEmpty()
+    .withMessage("Phone number is required")
+    .isMobilePhone()
+    .withMessage("Please provide a valid phone number"),
+
+  body("street")
+    .notEmpty()
+    .withMessage("Street address is required")
+    .isLength({ max: 255 })
+    .withMessage("Street address cannot exceed 255 characters")
+    .trim(),
+
+  body("apartment")
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage("Apartment/Suite cannot exceed 100 characters")
+    .trim(),
+
+  body("city")
+    .notEmpty()
+    .withMessage("City is required")
+    .isLength({ max: 100 })
+    .withMessage("City cannot exceed 100 characters")
+    .trim(),
+
+  body("state")
+    .notEmpty()
+    .withMessage("State is required")
+    .isLength({ max: 100 })
+    .withMessage("State cannot exceed 100 characters")
+    .trim(),
+
+  body("zipCode")
+    .notEmpty()
+    .withMessage("Zip code is required")
+    .isPostalCode("any")
+    .withMessage("Please provide a valid zip code"),
+
+  body("country")
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage("Country cannot exceed 100 characters")
+    .trim(),
+
+  body("isDefaultShipping")
+    .optional()
+    .isBoolean()
+    .withMessage("isDefaultShipping must be a boolean"),
+
+  body("isDefaultBilling")
+    .optional()
+    .isBoolean()
+    .withMessage("isDefaultBilling must be a boolean"),
+];
+
+const validateUpdateAddress = [
+  param("addressId")
+    .isMongoId()
+    .withMessage("Invalid address ID"),
+
+  body("label")
+    .optional()
+    .isLength({ max: 50 })
+    .withMessage("Label cannot exceed 50 characters")
+    .trim(),
+
+  body("fullName")
+    .optional()
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Full name must be between 2 and 100 characters")
+    .trim(),
+
+  body("phone")
+    .optional()
+    .isMobilePhone()
+    .withMessage("Please provide a valid phone number"),
+
+  body("street")
+    .optional()
+    .isLength({ max: 255 })
+    .withMessage("Street address cannot exceed 255 characters")
+    .trim(),
+
+  body("apartment")
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage("Apartment/Suite cannot exceed 100 characters")
+    .trim(),
+
+  body("city")
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage("City cannot exceed 100 characters")
+    .trim(),
+
+  body("state")
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage("State cannot exceed 100 characters")
+    .trim(),
+
+  body("zipCode")
+    .optional()
+    .isPostalCode("any")
+    .withMessage("Please provide a valid zip code"),
+
+  body("country")
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage("Country cannot exceed 100 characters")
+    .trim(),
+
+  body("isDefaultShipping")
+    .optional()
+    .isBoolean()
+    .withMessage("isDefaultShipping must be a boolean"),
+
+  body("isDefaultBilling")
+    .optional()
+    .isBoolean()
+    .withMessage("isDefaultBilling must be a boolean"),
+];
+
+const validateSetDefaultAddress = [
+  param("addressId")
+    .isMongoId()
+    .withMessage("Invalid address ID"),
+
+  body("type")
+    .notEmpty()
+    .withMessage("Type is required")
+    .isIn(["shipping", "billing", "both"])
+    .withMessage("Type must be 'shipping', 'billing', or 'both'"),
+];
+
+const validateDeletionRequest = [
+  body("password")
+    .notEmpty()
+    .withMessage("Password is required to request account deletion"),
+
+  body("reason")
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage("Reason cannot exceed 500 characters")
+    .trim(),
+];
+
 module.exports = {
   validateUpdateProfile,
   validateChangePassword,
   validatePreferences,
   validateDeleteAccount,
   validateReactivateAccount,
+  validateAddAddress,
+  validateUpdateAddress,
+  validateSetDefaultAddress,
+  validateDeletionRequest,
 };

@@ -456,12 +456,6 @@ const createProduct = async (req, res) => {
       }
     }
 
-    // Generate slug from name if not provided
-    let productSlug = seo?.slug;
-    if (!productSlug) {
-      productSlug = generateSlug(name);
-    }
-
     // Create product
     const product = new Product({
       name,
@@ -484,7 +478,6 @@ const createProduct = async (req, res) => {
       seo: {
         metaTitle: seo?.metaTitle || name,
         metaDescription: seo?.metaDescription || description.substring(0, 160),
-        slug: productSlug,
       },
       tags: tags || [],
       status,
@@ -509,8 +502,8 @@ const createProduct = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: productType === "package" 
-        ? "Package created successfully" 
+      message: productType === "package"
+        ? "Package created successfully"
         : "Product created successfully",
       data: {
         product,
@@ -543,6 +536,11 @@ const updateProduct = async (req, res) => {
     const { productId } = req.params;
     const updateData = req.body;
 
+    // Sanitize images: only allow array of strings
+    if (Array.isArray(updateData.images)) {
+      updateData.images = updateData.images.filter(img => typeof img === "string");
+    }
+
     const product = await Product.findById(productId);
     if (!product) {
       return res.status(404).json({
@@ -553,7 +551,7 @@ const updateProduct = async (req, res) => {
 
     // Handle SKU uniqueness check if SKU is being updated
     if (updateData.sku && updateData.sku !== product.sku) {
-      const existingProduct = await Product.findOne({ sku: updateData.sku });
+      const existingProduct = await Product.findOne({ sku: updateData.sku, _id: { $ne: productId } });
       if (existingProduct) {
         return res.status(400).json({
           success: false,
@@ -562,13 +560,15 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // Handle slug generation if name is updated
-    if (updateData.name && !updateData.seo?.slug) {
-      updateData.seo = {
-        ...product.seo,
-        ...updateData.seo,
-        slug: generateSlug(updateData.name),
-      };
+    // Handle discount field - remove it if type is invalid or "none"
+    if (updateData.discount !== undefined) {
+      if (updateData.discount === null ||
+        (typeof updateData.discount === "object" &&
+          (!updateData.discount.type || !["percentage", "fixed"].includes(updateData.discount.type)))) {
+        // Remove discount from both updateData and the product object
+        delete updateData.discount;
+        product.discount = undefined;
+      }
     }
 
     // Update product fields
@@ -992,8 +992,8 @@ const getLowStockAlerts = async (req, res) => {
         product.inventory.quantity === 0
           ? "CRITICAL"
           : product.inventory.quantity <= product.inventory.lowStockAlert / 2
-          ? "HIGH"
-          : "MEDIUM",
+            ? "HIGH"
+            : "MEDIUM",
     }));
 
     res.json({
@@ -1029,15 +1029,6 @@ const getLowStockAlerts = async (req, res) => {
 };
 
 // Helper Functions
-
-const generateSlug = (name) => {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/[\s_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-};
 
 const calculateProductConversionRate = (ordersCount) => {
   // This would typically involve more complex calculation

@@ -8,7 +8,7 @@ payment done
 transactions done
 analytics done
 coupon done
-notifications
+
 
 
 features

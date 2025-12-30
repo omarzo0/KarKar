@@ -33,52 +33,44 @@ router.use(adminAuth);
 // Product management routes
 router.get(
   "/",
-  requirePermission("canManageProducts"),
   validateGetProducts,
   getAllProducts
 );
 router.get(
   "/alerts/low-stock",
-  requirePermission("canManageInventory"),
   validateLowStockQuery,
   getLowStockAlerts
 );
 router.get(
   "/:productId",
-  requirePermission("canManageProducts"),
   validateProductId,
   getProductById
 );
 router.post(
   "/",
-  requirePermission("canManageProducts"),
   validateCreateProduct,
   createProduct
 );
 router.put(
   "/:productId",
-  requirePermission("canManageProducts"),
   validateProductId,
   validateUpdateProduct,
   updateProduct
 );
 router.delete(
   "/:productId",
-  requirePermission("canManageProducts"),
   validateProductId,
   validateDeleteProduct,
   deleteProduct
 );
 router.put(
   "/:productId/inventory",
-  requirePermission("canManageInventory"),
   validateProductId,
   validateInventoryUpdate,
   updateProductInventory
 );
 router.post(
   "/bulk",
-  requirePermission("canManageProducts"),
   validateBulkOperations,
   bulkProductOperations
 );
