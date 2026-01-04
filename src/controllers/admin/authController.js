@@ -327,7 +327,7 @@ const forgotPassword = async (req, res) => {
     // Rate limiting: Check if reset was requested recently (5 min cooldown)
     if (admin.passwordReset?.lastRequestedAt) {
       const timeSinceLastRequest = Date.now() - new Date(admin.passwordReset.lastRequestedAt).getTime();
-      const cooldownPeriod = 5 * 60 * 1000; // 5 minutes
+      const cooldownPeriod = 2 * 60 * 1000; // 2 minutes
 
       if (timeSinceLastRequest < cooldownPeriod) {
         const remainingTime = Math.ceil((cooldownPeriod - timeSinceLastRequest) / 1000 / 60);

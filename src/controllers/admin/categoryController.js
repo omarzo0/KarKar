@@ -52,6 +52,7 @@ const getAllCategories = async (req, res) => {
     if (search) {
       filter.$or = [
         { name: { $regex: search, $options: "i" } },
+        { slug: { $regex: search, $options: "i" } },
         { description: { $regex: search, $options: "i" } },
       ];
     }
@@ -79,7 +80,7 @@ const getAllCategories = async (req, res) => {
 
     // Get categories with pagination
     const categories = await Category.find(filter)
-      .populate("parent", "name")
+      .populate("parent", "name slug")
       .populate("createdBy", "username profile.firstName profile.lastName")
       .sort(sortConfig)
       .limit(limit * 1)
@@ -149,7 +150,7 @@ const getCategoryById = async (req, res) => {
     }
 
     const category = await Category.findById(categoryId)
-      .populate("parent", "name")
+      .populate("parent", "name slug")
       .populate("createdBy", "username profile.firstName profile.lastName")
       .populate("updatedBy", "username profile.firstName profile.lastName")
       .populate({
@@ -204,6 +205,7 @@ const createCategory = async (req, res) => {
 
     const {
       name,
+      slug,
       description,
       parent,
       image,
@@ -240,6 +242,7 @@ const createCategory = async (req, res) => {
 
     const category = new Category({
       name,
+      slug,
       description,
       parent: parent || null,
       image,
@@ -606,6 +609,7 @@ const getCategoryStatistics = async (req, res) => {
         category: {
           _id: category._id,
           name: category.name,
+          slug: category.slug,
         },
         products: productStats[0] || {
           totalProducts: 0,

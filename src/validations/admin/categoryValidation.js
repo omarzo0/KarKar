@@ -9,6 +9,13 @@ const validateCreateCategory = [
     .isLength({ min: 2, max: 100 })
     .withMessage("Category name must be between 2 and 100 characters"),
 
+  body("slug")
+    .optional()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage("Slug cannot exceed 100 characters")
+    .matches(/^[a-z0-9-]+$/)
+    .withMessage("Slug can only contain lowercase letters, numbers, and hyphens"),
 
   body("description")
     .optional()
@@ -108,6 +115,13 @@ const validateUpdateCategory = [
     .isLength({ min: 2, max: 100 })
     .withMessage("Category name must be between 2 and 100 characters"),
 
+  body("slug")
+    .optional()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage("Slug cannot exceed 100 characters")
+    .matches(/^[a-z0-9-]+$/)
+    .withMessage("Slug can only contain lowercase letters, numbers, and hyphens"),
 
   body("description")
     .optional()

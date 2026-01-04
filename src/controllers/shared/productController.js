@@ -1,3 +1,64 @@
+// @desc    Get all packages
+// @route   GET /api/products/packages
+// @access  Public
+async function getAllPackages(req, res) {
+  try {
+    const packages = await Product.find({ productType: "package", status: "active" });
+    res.json({ success: true, data: packages });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+// @desc    Get package by ID
+// @route   GET /api/products/packages/:packageId
+// @access  Public
+async function getPackageById(req, res) {
+  try {
+    const { packageId } = req.params;
+    const packageDoc = await Product.findOne({ _id: packageId, productType: "package", status: "active" });
+    if (!packageDoc) {
+      return res.status(404).json({ success: false, message: "Package not found" });
+    }
+    res.json({ success: true, data: packageDoc });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+const Category = require("../../models/Category");
+// ...existing code...
+
+// @desc    Get all categories
+// @route   GET /api/products/categories
+// @access  Public
+
+// @desc    Get all categories
+// @route   GET /api/products/categories
+// @access  Public
+async function getAllCategories(req, res) {
+  try {
+    const categories = await Category.find({ isActive: true });
+    res.json({ success: true, data: categories });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
+
+// @desc    Get category by ID
+// @route   GET /api/products/categories/:categoryId
+// @access  Public
+async function getCategoryById(req, res) {
+  try {
+    const { categoryId } = req.params;
+    const category = await Category.findOne({ _id: categoryId, isActive: true });
+    if (!category) {
+      return res.status(404).json({ success: false, message: 'Category not found' });
+    }
+    res.json({ success: true, data: category });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+}
 const Product = require("../../models/Product");
 const { validationResult } = require("express-validator");
 
@@ -54,6 +115,7 @@ const getAllProducts = async (req, res) => {
       filter.$or = [
         { name: { $regex: search, $options: "i" } },
         { description: { $regex: search, $options: "i" } },
+        { "specifications.brand": { $regex: search, $options: "i" } },
         { tags: { $in: [new RegExp(search, "i")] } },
       ];
     }
@@ -160,7 +222,7 @@ const getProductById = async (req, res) => {
     if (product.productType === "package") {
       product = await Product.findById(productId).populate({
         path: "packageItems.productId",
-        select: "name price images inventory status",
+        select: "name price images inventory status seo.slug",
       });
     }
 
@@ -171,7 +233,7 @@ const getProductById = async (req, res) => {
       _id: { $ne: productId },
     })
       .limit(4)
-      .select("name price images productType packageDetails");
+      .select("name price images slug productType packageDetails");
 
     res.json({
       success: true,
@@ -190,304 +252,50 @@ const getProductById = async (req, res) => {
   }
 };
 
-
-
-// @desc    Create new product
-// @route   POST /api/products
-// @access  Private (Admin)
-const createProduct = async (req, res) => {
+// @desc    Get product by slug
+// @route   GET /api/products/slug/:slug
+// @access  Public
+const getProductBySlug = async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
+    const { slug } = req.params;
+
+    const product = await Product.findOne({
+      "seo.slug": slug,
+      status: "active",
+    });
+
+    if (!product) {
+      return res.status(404).json({
         success: false,
-        message: "Validation failed",
-        errors: errors.array(),
+        message: "Product not found",
       });
     }
 
-    const productData = {
-      ...req.body,
-      createdBy: req.admin.adminId,
-    };
-
-
-
-    const product = new Product(productData);
+    // Increment view count (you might want to track this differently)
+    product.views = (product.views || 0) + 1;
     await product.save();
 
-    res.status(201).json({
+    // Get related products
+    const relatedProducts = await Product.find({
+      category: product.category,
+      status: "active",
+      _id: { $ne: product._id },
+    })
+      .limit(4)
+      .select("name price images slug");
+
+    res.json({
       success: true,
-      message: "Product created successfully",
       data: {
         product,
+        relatedProducts,
       },
     });
   } catch (error) {
-    console.error("Create product error:", error);
+    console.error("Get product by slug error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while creating product",
-      error: error.message,
-    });
-  }
-};
-
-// @desc    Update product
-// @route   PUT /api/products/:productId
-// @access  Private (Admin)
-const updateProduct = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array(),
-      });
-    }
-
-    const { productId } = req.params;
-
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
-
-    // Update product fields
-    Object.keys(req.body).forEach((key) => {
-      if (req.body[key] !== undefined) {
-        if (key === "inventory" && typeof req.body[key] === "object") {
-          product.inventory = { ...product.inventory, ...req.body[key] };
-        } else if (
-          key === "specifications" &&
-          typeof req.body[key] === "object"
-        ) {
-          product.specifications = {
-            ...product.specifications,
-            ...req.body[key],
-          };
-        } else if (key === "seo" && typeof req.body[key] === "object") {
-          product.seo = { ...product.seo, ...req.body[key] };
-        } else {
-          product[key] = req.body[key];
-        }
-      }
-    });
-
-    product.updatedAt = new Date();
-    await product.save();
-
-    res.json({
-      success: true,
-      message: "Product updated successfully",
-      data: {
-        product,
-      },
-    });
-  } catch (error) {
-    console.error("Update product error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while updating product",
-      error: error.message,
-    });
-  }
-};
-
-// @desc    Delete product
-// @route   DELETE /api/products/:productId
-// @access  Private (Admin)
-const deleteProduct = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array(),
-      });
-    }
-
-    const { productId } = req.params;
-
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
-
-    // Instead of hard delete, you might want to soft delete
-    // await Product.findByIdAndDelete(productId);
-
-    // Soft delete by setting status to inactive
-    product.status = "inactive";
-    await product.save();
-
-    res.json({
-      success: true,
-      message: "Product deleted successfully",
-    });
-  } catch (error) {
-    console.error("Delete product error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while deleting product",
-      error: error.message,
-    });
-  }
-};
-
-// @desc    Bulk product operations
-// @route   POST /api/products/bulk
-// @access  Private (Admin)
-const bulkProductOperation = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array(),
-      });
-    }
-
-    const { productIds, action, data } = req.body;
-
-    let result;
-    switch (action) {
-      case "activate":
-        result = await Product.updateMany(
-          { _id: { $in: productIds } },
-          { $set: { status: "active", updatedAt: new Date() } }
-        );
-        break;
-
-      case "deactivate":
-        result = await Product.updateMany(
-          { _id: { $in: productIds } },
-          { $set: { status: "inactive", updatedAt: new Date() } }
-        );
-        break;
-
-      case "delete":
-        // Soft delete
-        result = await Product.updateMany(
-          { _id: { $in: productIds } },
-          { $set: { status: "inactive", updatedAt: new Date() } }
-        );
-        break;
-
-      case "updateInventory":
-        if (!data || !data.quantity) {
-          return res.status(400).json({
-            success: false,
-            message: "Quantity is required for inventory update",
-          });
-        }
-        result = await Product.updateMany(
-          { _id: { $in: productIds } },
-          {
-            $set: {
-              "inventory.quantity": data.quantity,
-              updatedAt: new Date(),
-            },
-          }
-        );
-        break;
-
-      default:
-        return res.status(400).json({
-          success: false,
-          message: "Invalid action",
-        });
-    }
-
-    res.json({
-      success: true,
-      message: `Bulk operation completed: ${action}`,
-      data: {
-        modifiedCount: result.modifiedCount,
-      },
-    });
-  } catch (error) {
-    console.error("Bulk product operation error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while performing bulk operation",
-      error: error.message,
-    });
-  }
-};
-
-// @desc    Update product inventory
-// @route   PUT /api/products/:productId/inventory
-// @access  Private (Admin)
-const updateProductInventory = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array(),
-      });
-    }
-
-    const { productId } = req.params;
-    const { quantity, operation = "set" } = req.body;
-
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
-
-    let newQuantity;
-    switch (operation) {
-      case "set":
-        newQuantity = quantity;
-        break;
-      case "increment":
-        newQuantity = product.inventory.quantity + quantity;
-        break;
-      case "decrement":
-        newQuantity = Math.max(0, product.inventory.quantity - quantity);
-        break;
-      default:
-        return res.status(400).json({
-          success: false,
-          message: "Invalid operation",
-        });
-    }
-
-    product.inventory.quantity = newQuantity;
-    product.updatedAt = new Date();
-    await product.save();
-
-    res.json({
-      success: true,
-      message: "Product inventory updated successfully",
-      data: {
-        product: {
-          _id: product._id,
-          name: product.name,
-          inventory: product.inventory,
-        },
-      },
-    });
-  } catch (error) {
-    console.error("Update product inventory error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while updating product inventory",
+      message: "Server error while fetching product",
       error: error.message,
     });
   }
@@ -506,7 +314,7 @@ const getFeaturedProducts = async (req, res) => {
     })
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
-      .select("name price images category specifications");
+      .select("name price images slug category specifications");
 
     res.json({
       success: true,
@@ -539,7 +347,7 @@ const getProductsByCategory = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit)
-      .select("name price images category specifications");
+      .select("name price images slug category specifications");
 
     const totalProducts = await Product.countDocuments({
       category: { $regex: category, $options: "i" },
@@ -588,13 +396,14 @@ const searchProducts = async (req, res) => {
           $or: [
             { name: { $regex: q, $options: "i" } },
             { description: { $regex: q, $options: "i" } },
+            { "specifications.brand": { $regex: q, $options: "i" } },
             { tags: { $in: [new RegExp(q, "i")] } },
           ],
         },
       ],
     })
       .limit(parseInt(limit))
-      .select("name price images category");
+      .select("name price images slug category");
 
     res.json({
       success: true,
@@ -634,13 +443,26 @@ const getSearchSuggestions = async (req, res) => {
       name: { $regex: q, $options: "i" },
     })
       .limit(parseInt(limit))
-      .select("name images price category");
+      .select("name slug images price category");
+
+    // Get category suggestions
+    const categories = await Product.distinct("category", {
+      status: "active",
+      category: { $regex: q, $options: "i" },
+    });
+
+    // Get brand suggestions
+    const brands = await Product.distinct("specifications.brand", {
+      status: "active",
+      "specifications.brand": { $regex: q, $options: "i" },
+    });
 
     res.json({
       success: true,
       data: {
         products,
         categories: categories.slice(0, 5),
+        brands: brands.slice(0, 5),
         searchQuery: q,
       },
     });
@@ -718,11 +540,18 @@ const getFiltersData = async (req, res) => {
     }
 
     // Get all filter options in parallel
-    const [categories, priceRange, attributes] = await Promise.all([
+    const [categories, brands, priceRange, attributes] = await Promise.all([
       // Categories with count
       Product.aggregate([
         { $match: { status: "active" } },
         { $group: { _id: "$category", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      // Brands with count
+      Product.aggregate([
+        { $match: baseFilter },
+        { $group: { _id: "$specifications.brand", count: { $sum: 1 } } },
+        { $match: { _id: { $ne: null } } },
         { $sort: { count: -1 } },
       ]),
       // Price range
@@ -731,20 +560,20 @@ const getFiltersData = async (req, res) => {
         {
           $group: {
             _id: null,
-            min: { $min: "$price" },
-            max: { $max: "$price" },
+            minPrice: { $min: "$price" },
+            maxPrice: { $max: "$price" },
+            avgPrice: { $avg: "$price" },
           },
         },
       ]),
-      // Other attributes (storage, color etc)
-      // This is a more complex aggregation to get all unique values for these fields
+      // Product attributes (colors, sizes, etc.)
       Product.aggregate([
         { $match: baseFilter },
+        { $unwind: { path: "$attributes", preserveNullAndEmptyArrays: false } },
         {
           $group: {
-            _id: null,
-            colors: { $addToSet: "$specifications.color" },
-            storage: { $addToSet: "$specifications.storage" },
+            _id: "$attributes.name",
+            values: { $addToSet: "$attributes.value" },
           },
         },
       ]),
@@ -754,8 +583,9 @@ const getFiltersData = async (req, res) => {
       success: true,
       data: {
         categories: categories.map(c => ({ name: c._id, count: c.count })),
-        priceRange: priceRange[0] || { min: 0, max: 0 },
-        attributes: attributes[0] || { colors: [], storage: [] },
+        brands: brands.map(b => ({ name: b._id, count: b.count })),
+        priceRange: priceRange[0] || { minPrice: 0, maxPrice: 1000, avgPrice: 500 },
+        attributes,
         stockOptions: [
           { value: "in_stock", label: "In Stock" },
           { value: "out_of_stock", label: "Out of Stock" },
@@ -960,14 +790,11 @@ const estimateShipping = async (req, res) => {
 };
 
 
+
 module.exports = {
   getAllProducts,
   getProductById,
-  createProduct,
-  updateProduct,
-  deleteProduct,
-  bulkProductOperation,
-  updateProductInventory,
+  getProductBySlug,
   getFeaturedProducts,
   getProductsByCategory,
   searchProducts,
@@ -977,4 +804,8 @@ module.exports = {
   recordProductView,
   getStockAvailability,
   estimateShipping,
+  getAllCategories,
+  getCategoryById,
+  getAllPackages,
+  getPackageById,
 };

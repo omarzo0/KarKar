@@ -126,7 +126,7 @@ const getOrderById = async (req, res) => {
         "username email profile.firstName profile.lastName profile.phone"
       )
       .populate("handledBy", "username profile.firstName profile.lastName")
-      .populate("items.productId", "name images inventory");
+      .populate("items.productId", "name images sku inventory");
 
     if (!order) {
       return res.status(404).json({
@@ -177,8 +177,8 @@ const updateOrderStatus = async (req, res) => {
       "confirmed",
       "shipped",
       "delivered",
-      "returned",
       "cancelled",
+      "returned",
     ];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
@@ -202,12 +202,34 @@ const updateOrderStatus = async (req, res) => {
       handledBy: req.admin._id, // Track which admin updated the order
     };
 
+    // Set timestamp based on status
+    if (status === "confirmed") updateData.confirmedAt = new Date();
+    if (status === "shipped") updateData.shippedAt = new Date();
+    if (status === "delivered") updateData.deliveredAt = new Date();
+    if (status === "returned") updateData.returnedAt = new Date();
+
     if (trackingNumber) updateData.trackingNumber = trackingNumber;
 
     const updatedOrder = await Order.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
     }).populate("handledBy", "username profile.firstName profile.lastName");
+
+    // If order is returned and payment was made, initiate refund process
+    if (status === "returned" && order.paymentStatus === "paid") {
+      await Payment.findOneAndUpdate(
+        { orderId: id },
+        {
+          status: "refunded",
+          refundAmount: order.totals.total,
+          refundDate: new Date(),
+          processedBy: req.admin._id,
+        }
+      );
+
+      updatedOrder.paymentStatus = "refunded";
+      await updatedOrder.save();
+    }
 
     // If order is cancelled and payment was made, initiate refund process
     if (status === "cancelled" && order.paymentStatus === "paid") {
@@ -228,9 +250,7 @@ const updateOrderStatus = async (req, res) => {
       await updatedOrder.save();
     }
 
-    // Send status update notification to customer
-    const { sendOrderStatusUpdateEmail } = require("../../services/emailService");
-    sendOrderStatusUpdateEmail(updatedOrder).catch(err => console.error("Failed to send status update email:", err));
+    // TODO: Send status update notification to customer
 
     res.json({
       success: true,
@@ -1089,7 +1109,7 @@ async function generateInvoice(req, res) {
 
     const order = await Order.findById(id)
       .populate("userId", "email profile.firstName profile.lastName profile.phone")
-      .populate("items.productId", "name");
+      .populate("items.productId", "name sku");
 
     if (!order) {
       return res.status(404).json({
@@ -1104,39 +1124,40 @@ async function generateInvoice(req, res) {
       invoiceDate: new Date(),
       orderNumber: order.orderNumber,
       orderDate: order.createdAt,
-
+      
       // Customer details
       customer: {
         name: `${order.customer.firstName} ${order.customer.lastName}`,
         email: order.customer.email,
         phone: order.customer.phone || "",
       },
-
+      
       // Billing address
       billingAddress: order.shippingAddress,
-
+      
       // Shipping address
       shippingAddress: order.shippingAddress,
-
+      
       // Items
       items: order.items.map((item) => ({
         name: item.name,
+        sku: item.productId?.sku || "N/A",
         quantity: item.quantity,
         unitPrice: item.price,
         subtotal: item.subtotal,
       })),
-
+      
       // Totals
       subtotal: order.totals.subtotal,
       discount: order.totals.discount || 0,
       tax: order.totals.tax || 0,
       shipping: order.totals.shipping || 0,
       total: order.totals.total,
-
+      
       // Payment info
       paymentStatus: order.paymentStatus,
       paymentMethod: order.paymentMethod || "N/A",
-
+      
       // Company info (should come from settings)
       company: {
         name: "MK Dental",
@@ -1145,7 +1166,7 @@ async function generateInvoice(req, res) {
         email: "",
         website: "",
       },
-
+      
       // Notes
       notes: order.notes?.filter((n) => !n.isPrivate).map((n) => n.content) || [],
     };
@@ -1226,6 +1247,7 @@ function generateHtmlInvoice(data) {
         <thead>
           <tr>
             <th>Item</th>
+            <th>SKU</th>
             <th>Qty</th>
             <th>Price</th>
             <th>Total</th>
@@ -1235,6 +1257,7 @@ function generateHtmlInvoice(data) {
           ${data.items.map((item) => `
             <tr>
               <td>${item.name}</td>
+              <td>${item.sku}</td>
               <td>${item.quantity}</td>
               <td>$${item.unitPrice.toFixed(2)}</td>
               <td>$${item.subtotal.toFixed(2)}</td>

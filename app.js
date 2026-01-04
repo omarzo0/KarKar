@@ -64,6 +64,7 @@ const userProfileRoutes = require("./src/routes/user/profileRoutes");
 const userOrderRoutes = require("./src/routes/user/orderRoutes");
 const userCartRoutes = require("./src/routes/user/cartRoutes");
 const userWishlistRoutes = require("./src/routes/user/wishlistRoutes");
+const userCategoryRoutes = require("./src/routes/user/categoryRoutes");
 
 // Admin Routes
 const adminAuthRoutes = require("./src/routes/admin/authRoutes");
@@ -93,6 +94,7 @@ app.use("/api/user/profile", userProfileRoutes);
 app.use("/api/user/orders", userOrderRoutes);
 app.use("/api/user/cart", userCartRoutes);
 app.use("/api/user/wishlist", userWishlistRoutes);
+app.use("/api/user/categories", userCategoryRoutes);
 
 // Admin API Routes
 app.use("/api/admin/auth", adminAuthRoutes);
@@ -140,43 +142,6 @@ app.get("/api/products/featured", async (req, res) => {
   }
 });
 
-app.get("/api/products/category/:category", async (req, res) => {
-  try {
-    const { category } = req.params;
-    const { page = 1, limit = 12 } = req.query;
-
-    const Product = require("./src/models/Product");
-    const products = await Product.find({
-      category: { $regex: category, $options: "i" },
-      status: "active",
-    })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .select("name price images slug category");
-
-    const totalProducts = await Product.countDocuments({
-      category: { $regex: category, $options: "i" },
-      status: "active",
-    });
-
-    res.json({
-      success: true,
-      data: {
-        products,
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(totalProducts / limit),
-          totalProducts,
-        },
-      },
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error fetching products by category",
-    });
-  }
-});
 
 // Health check with detailed status
 app.get("/health", async (req, res) => {

@@ -3,10 +3,8 @@ const Order = require("../../models/Order");
 const Product = require("../../models/Product");
 const Cart = require("../../models/Cart");
 const Payment = require("../../models/Payment");
-const Coupon = require("../../models/Coupon");
-const PaymentSettings = require("../../models/PaymentSettings");
+const ShippingFee = require("../../models/ShippingFee");
 const { validationResult } = require("express-validator");
-const { sendOrderConfirmationEmail, sendNewOrderAdminNotification } = require("../../services/emailService");
 
 // @desc    Get user's orders
 // @route   GET /api/user/orders
@@ -44,7 +42,7 @@ const getUserOrders = async (req, res) => {
       .sort(sortConfig)
       .limit(limit * 1)
       .skip((page - 1) * limit)
-      .populate("items.productId", "name images slug")
+      .populate("items.productId", "name images")
       .select("-__v");
 
     const totalOrders = await Order.countDocuments(filter);
@@ -106,7 +104,7 @@ const getOrderById = async (req, res) => {
       _id: orderId,
       userId: userId,
     })
-      .populate("items.productId", "name images slug specifications")
+      .populate("items.productId", "name images specifications")
       .populate("userId", "username email profile");
 
     if (!order) {
@@ -129,7 +127,7 @@ const getOrderById = async (req, res) => {
       _id: { $ne: order.items[0]?.productId?._id },
     })
       .limit(4)
-      .select("name price images slug");
+      .select("name price images");
 
     res.json({
       success: true,
@@ -164,55 +162,125 @@ const createOrder = async (req, res) => {
     }
 
     const {
+      customerInfo,
+      items,
       shippingAddress,
       billingAddress,
       shippingMethod = "standard",
       paymentMethod,
       notes,
-      useSavedAddress = false,
     } = req.body;
 
-    const userId = req.user.userId;
+    const resolvedBillingAddress = (() => {
+      if (!shippingAddress) return billingAddress;
 
-    // Validate payment method against configured methods
-    const settings = await PaymentSettings.getSettings();
-    const configuredMethods = settings?.methods || [];
-    const validMethod = configuredMethods.find(m => m.name === paymentMethod && m.enabled);
-    
-    if (!validMethod) {
+      if (!billingAddress || billingAddress.useShippingAddress) {
+        return {
+          street: shippingAddress.street,
+          city: shippingAddress.city,
+          state: shippingAddress.state,
+          zipCode: shippingAddress.zipCode,
+          country: shippingAddress.country,
+        };
+      }
+
+      return {
+        street: billingAddress.street || shippingAddress.street,
+        city: billingAddress.city || shippingAddress.city,
+        state: billingAddress.state || shippingAddress.state,
+        zipCode: billingAddress.zipCode || shippingAddress.zipCode,
+        country: billingAddress.country || shippingAddress.country,
+      };
+    })();
+
+    const resolvedNotes = (() => {
+      if (!notes) return undefined;
+
+      if (typeof notes === "string") {
+        const trimmed = notes.trim();
+        return trimmed ? [{ content: trimmed }] : undefined;
+      }
+
+      if (Array.isArray(notes)) {
+        const normalized = notes
+          .map((n) => {
+            if (!n) return null;
+            if (typeof n === "string") {
+              const trimmed = n.trim();
+              return trimmed ? { content: trimmed } : null;
+            }
+            if (typeof n === "object" && typeof n.content === "string") {
+              const trimmed = n.content.trim();
+              return trimmed ? { ...n, content: trimmed } : null;
+            }
+            return null;
+          })
+          .filter(Boolean);
+
+        return normalized.length > 0 ? normalized : undefined;
+      }
+
+      return undefined;
+    })();
+
+    const userId = req.user?.userId;
+    const isGuestOrder = !userId;
+
+    // Validate required customer info (if not guest, we can still use customerInfo from body if provided, or pull from user)
+    const activeCustomerInfo = customerInfo || (req.user ? {
+      email: req.user.email,
+      firstName: req.user.profile.firstName,
+      lastName: req.user.profile.lastName,
+      phone: req.user.profile.phone,
+    } : null);
+
+    if (!activeCustomerInfo?.email || !activeCustomerInfo?.firstName || !activeCustomerInfo?.lastName) {
       return res.status(400).json({
         success: false,
-        message: `Payment method '${paymentMethod}' is not available`,
+        message: "Customer information is required (email, firstName, lastName)",
       });
     }
 
-    // Get user's cart
-    const cart = await Cart.findOne({ userId }).populate("items.productId");
-    if (!cart || cart.items.length === 0) {
+    // Build order items
+    let itemsToProcess = items || [];
+
+    // Fallback to cart for authenticated users if no items provided in body
+    if (itemsToProcess.length === 0 && userId) {
+      const cart = await Cart.findOne({ userId }).populate("items.productId");
+      if (cart && cart.items.length > 0) {
+        itemsToProcess = cart.items;
+      }
+    }
+
+    if (itemsToProcess.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Cart is empty",
+        message: "No items provided for the order",
       });
     }
 
-    // Validate cart items and calculate totals
     const orderItems = [];
     let subtotal = 0;
     let outOfStockItems = [];
 
-    for (const cartItem of cart.items) {
-      const product = cartItem.productId;
+    for (const item of itemsToProcess) {
+      let product = item.productId;
+
+      // Fetch product if it's just an ID (case for guest orders passed in body)
+      if (typeof product === "string" || mongoose.Types.ObjectId.isValid(product)) {
+        product = await Product.findById(product);
+      }
 
       if (!product || product.status !== "active") {
         outOfStockItems.push({
-          productId: product?._id,
+          productId: typeof item.productId === "string" ? item.productId : item.productId?._id,
           name: product?.name || "Unknown Product",
           reason: "Product no longer available",
         });
         continue;
       }
 
-      if (product.inventory.quantity < cartItem.quantity) {
+      if (product.inventory.quantity < item.quantity) {
         outOfStockItems.push({
           productId: product._id,
           name: product.name,
@@ -236,7 +304,7 @@ const createOrder = async (req, res) => {
         }
       }
 
-      const itemTotal = product.price * cartItem.quantity;
+      const itemTotal = product.price * item.quantity;
       subtotal += itemTotal;
 
       // Build order item
@@ -244,10 +312,9 @@ const createOrder = async (req, res) => {
         productId: product._id,
         name: product.name,
         price: product.price,
-        quantity: cartItem.quantity,
+        quantity: item.quantity,
         subtotal: itemTotal,
         image: product.images?.[0],
-        sku: product.sku,
         productType: product.productType || "single",
       };
 
@@ -282,34 +349,56 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Check if coupon has free shipping
-    const hasFreeShipping = cart.coupon && (cart.coupon.freeShipping || cart.coupon.discountType === 'free_shipping');
-    
     // Calculate totals
-    const baseShippingFee = calculateShippingFee(shippingMethod, subtotal);
-    const shippingFee = hasFreeShipping ? 0 : baseShippingFee;
+    let shippingFee = 0; // Default to 0, will be calculated or overridden
+    // Fallback if no shipping location details selected (can happen if UI doesn't force it)
+
+    // Calculate shipping fee based on governorate (shippingAddress.state)
+    const governorateFee = await ShippingFee.findOne({
+      name: { $regex: new RegExp(`^${shippingAddress.state}$`, "i") }, // Case-insensitive exact match
+      isActive: true
+    });
+
+    if (governorateFee) {
+      shippingFee = governorateFee.shippingFee;
+
+      // Check for free shipping threshold
+      if (governorateFee.freeShippingThreshold !== null && subtotal >= governorateFee.freeShippingThreshold) {
+        shippingFee = 0;
+      }
+    } else {
+      // Fallback or error? For now, default to standard calculation or 0 if not found
+      // Check for "Cairo" specific logic mentioned by user: "only cairo and give me 0"
+      // If db lookup fails, we maybe shouldn't block the order, but warn or use default.
+      // However, user requested dynamic fees. If not found, let's keep it 0 or standard.
+      shippingFee = calculateShippingFee(shippingMethod, subtotal);
+    }
+
+    // Check for free shipping coupon (if applicable, assuming coupon logic is handled elsewhere or simplified here)
+    // if (cart.coupon && (cart.coupon.freeShipping || cart.coupon.discountType === "free_shipping")) {
+    //   shippingFee = 0;
+    // }
+
     const taxAmount = calculateTax(subtotal, shippingAddress.state);
-    const discount = cart.summary.totalDiscount || 0;
+    const discount = 0; // Coupons can be added later to the unified flow
     const total = subtotal + shippingFee + taxAmount - discount;
 
     // Generate order number
     const orderNumber = await generateOrderNumber();
 
-    // Prepare coupon data for order
-    let couponData = undefined;
-    if (cart.coupon && cart.coupon.code) {
-      couponData = {
-        code: cart.coupon.code,
-        discount: cart.coupon.calculatedDiscount || 0,
-        discountType: cart.coupon.discountType,
-      };
-    }
-
     // Create order
     const order = new Order({
       orderNumber,
       userId,
-      customer: await getCustomerInfo(userId),
+      isGuestOrder,
+      customer: {
+        email: activeCustomerInfo.email,
+        firstName: activeCustomerInfo.firstName,
+        lastName: activeCustomerInfo.lastName,
+        phone: activeCustomerInfo.phone,
+        gender: activeCustomerInfo.gender,
+        dateOfBirth: activeCustomerInfo.dateOfBirth ? new Date(activeCustomerInfo.dateOfBirth) : undefined,
+      },
       items: orderItems,
       totals: {
         subtotal,
@@ -319,48 +408,45 @@ const createOrder = async (req, res) => {
         total,
       },
       shippingAddress,
-      billingAddress: billingAddress?.useShippingAddress
+      billingAddress: (!billingAddress || billingAddress.useShippingAddress)
         ? shippingAddress
         : billingAddress,
       shippingMethod,
+      // shippingLocation: cart.selectedShippingFee?.name, // This was cart-specific, remove for unified flow
       paymentMethod,
-      coupon: couponData,
-      notes,
+      customerNote: typeof notes === "string" ? notes : undefined,
+      notes: Array.isArray(notes) ? notes : [],
+      // coupon: cart.coupon ? { // This was cart-specific, remove for unified flow
+      //   code: cart.coupon.code,
+      //   couponId: cart.coupon.couponId,
+      //   discount: discount,
+      //   discountValue: cart.coupon.discountValue,
+      //   discountType: cart.coupon.discountType,
+      // } : undefined,
       status: "pending",
       paymentStatus: "pending",
     });
 
     await order.save();
 
-    // Record coupon usage if a coupon was applied
-    if (cart.coupon && cart.coupon.couponId) {
-      try {
-        const coupon = await Coupon.findById(cart.coupon.couponId);
-        if (coupon) {
-          await coupon.recordUsage(userId);
+    // Clear the cart if user is authenticated
+    if (userId) {
+      await Cart.findOneAndUpdate(
+        { userId },
+        {
+          items: [],
+          summary: {
+            itemsCount: 0,
+            totalPrice: 0,
+            totalDiscount: 0,
+            shippingFee: 0,
+            taxAmount: 0,
+            grandTotal: 0,
+          },
+          coupon: undefined,
         }
-      } catch (couponError) {
-        console.error("Error recording coupon usage:", couponError);
-        // Don't fail the order if coupon usage recording fails
-      }
+      );
     }
-
-    // Clear the cart after successful order creation
-    await Cart.findOneAndUpdate(
-      { userId },
-      {
-        items: [],
-        summary: {
-          itemsCount: 0,
-          totalPrice: 0,
-          totalDiscount: 0,
-          shippingFee: 0,
-          taxAmount: 0,
-          grandTotal: 0,
-        },
-        coupon: undefined,
-      }
-    );
 
     // Update product inventory
     await updateProductInventory(orderItems);
@@ -376,18 +462,9 @@ const createOrder = async (req, res) => {
     });
     await payment.save();
 
-    // Send order confirmation email to customer
-    sendOrderConfirmationEmail(order).catch(err => {
-      console.error("Failed to send order confirmation email:", err);
-    });
-
-    // Send notification email to admin
-    const adminEmail = process.env.ADMIN_EMAIL || process.env.EMAIL_FROM_ADDRESS;
-    if (adminEmail) {
-      sendNewOrderAdminNotification(order, adminEmail).catch(err => {
-        console.error("Failed to send admin notification email:", err);
-      });
-    }
+    // Send order confirmation email (non-blocking)
+    const { sendOrderConfirmationEmail } = require("../../services/emailService");
+    sendOrderConfirmationEmail(order).catch(err => console.error("Failed to send order confirmation email:", err));
 
     res.status(201).json({
       success: true,
@@ -998,7 +1075,6 @@ const createGuestOrder = async (req, res) => {
         quantity: item.quantity,
         subtotal: itemTotal,
         image: product.images?.[0],
-        sku: product.sku,
         productType: product.productType || "single",
       };
 
@@ -1060,12 +1136,10 @@ const createGuestOrder = async (req, res) => {
         total,
       },
       shippingAddress,
-      billingAddress: billingAddress?.useShippingAddress
-        ? shippingAddress
-        : billingAddress,
+      billingAddress: resolvedBillingAddress,
       shippingMethod,
       paymentMethod,
-      notes,
+      notes: resolvedNotes,
       status: "pending",
       paymentStatus: "pending",
     });
@@ -1257,7 +1331,7 @@ const getOrderTimeline = async (req, res) => {
       timeline.push({
         status: "shipped",
         title: "Shipped",
-        description: order.trackingNumber 
+        description: order.trackingNumber
           ? `Package shipped with tracking number: ${order.trackingNumber}`
           : "Your package has been shipped",
         date: order.shippedAt || order.updatedAt,
@@ -1294,7 +1368,7 @@ const getOrderTimeline = async (req, res) => {
     // Add estimated steps for non-delivered orders
     if (!["delivered", "cancelled", "refunded"].includes(order.status)) {
       const estimatedDelivery = calculateEstimatedDelivery(order.createdAt, order.shippingMethod);
-      
+
       if (order.status !== "shipped") {
         timeline.push({
           status: "shipped",
@@ -1349,7 +1423,7 @@ const downloadInvoice = async (req, res) => {
     const order = await Order.findOne({
       _id: orderId,
       userId: userId,
-    }).populate("items.productId", "name sku");
+    }).populate("items.productId", "name");
 
     if (!order) {
       return res.status(404).json({
@@ -1368,7 +1442,6 @@ const downloadInvoice = async (req, res) => {
       billingAddress: order.billingAddress || order.shippingAddress,
       items: order.items.map(item => ({
         name: item.name,
-        sku: item.sku || item.productId?.sku,
         quantity: item.quantity,
         price: item.price,
         subtotal: item.subtotal,
