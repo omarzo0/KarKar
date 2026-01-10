@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { adminAuth, requirePermission } = require("../../middleware/adminAuth");
+const { adminAuth } = require("../../middleware/adminAuth");
 
 const {
   validateBannerId,
@@ -30,7 +30,6 @@ router.use(adminAuth);
 // Get all banners
 router.get(
   "/",
-  requirePermission("canManageProducts"),
   validateBannerQuery,
   getAllBanners
 );
@@ -38,7 +37,6 @@ router.get(
 // Create banner
 router.post(
   "/",
-  requirePermission("canManageProducts"),
   validateCreateBanner,
   createBanner
 );
@@ -46,7 +44,6 @@ router.post(
 // Reorder banners
 router.put(
   "/reorder",
-  requirePermission("canManageProducts"),
   validateReorderBanners,
   reorderBanners
 );
@@ -54,7 +51,6 @@ router.put(
 // Bulk delete banners
 router.delete(
   "/bulk",
-  requirePermission("canManageProducts"),
   validateBulkDelete,
   bulkDeleteBanners
 );
@@ -62,7 +58,6 @@ router.delete(
 // Bulk update banner status
 router.patch(
   "/bulk/status",
-  requirePermission("canManageProducts"),
   validateBulkUpdateStatus,
   bulkUpdateStatus
 );
@@ -70,7 +65,6 @@ router.patch(
 // Get single banner
 router.get(
   "/:bannerId",
-  requirePermission("canManageProducts"),
   validateBannerId,
   getBannerById
 );
@@ -78,7 +72,6 @@ router.get(
 // Update banner
 router.put(
   "/:bannerId",
-  requirePermission("canManageProducts"),
   validateUpdateBanner,
   updateBanner
 );
@@ -86,7 +79,6 @@ router.put(
 // Delete banner
 router.delete(
   "/:bannerId",
-  requirePermission("canManageProducts"),
   validateBannerId,
   deleteBanner
 );
@@ -94,7 +86,6 @@ router.delete(
 // Toggle banner status
 router.patch(
   "/:bannerId/toggle",
-  requirePermission("canManageProducts"),
   validateBannerId,
   toggleBannerStatus
 );

@@ -1,11 +1,40 @@
+const Product = require("../../models/Product");
+const Category = require("../../models/Category");
+const { validationResult } = require("express-validator");
+const { formatImageArray, formatImageUrl } = require("../../utils/imageHelper");
+
 // @desc    Get all packages
 // @route   GET /api/products/packages
 // @access  Public
 async function getAllPackages(req, res) {
   try {
-    const packages = await Product.find({ productType: "package", status: "active" });
-    res.json({ success: true, data: packages });
+    const packages = await Product.find({
+      productType: "package",
+      status: "active",
+    }).populate({
+      path: "packageItems.productId",
+      select: "name price images inventory status",
+    });
+
+    res.json({
+      success: true,
+      data: packages.map((p) => ({
+        ...p.toObject(),
+        images: formatImageArray(req, p.images),
+        packageItems: p.packageItems.map((item) => ({
+          ...item.toObject(),
+          image: formatImageUrl(req, item.image),
+          productId: item.productId
+            ? {
+              ...item.productId.toObject(),
+              images: formatImageArray(req, item.productId.images),
+            }
+            : null,
+        })),
+      })),
+    });
   } catch (err) {
+    console.error("Get all packages error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 }
@@ -16,31 +45,54 @@ async function getAllPackages(req, res) {
 async function getPackageById(req, res) {
   try {
     const { packageId } = req.params;
-    const packageDoc = await Product.findOne({ _id: packageId, productType: "package", status: "active" });
+    const packageDoc = await Product.findOne({
+      _id: packageId,
+      productType: "package",
+      status: "active",
+    }).populate({
+      path: "packageItems.productId",
+      select: "name price images inventory status",
+    });
+
     if (!packageDoc) {
-      return res.status(404).json({ success: false, message: "Package not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Package not found" });
     }
-    res.json({ success: true, data: packageDoc });
+    res.json({
+      success: true,
+      data: {
+        ...packageDoc.toObject(),
+        images: formatImageArray(req, packageDoc.images),
+        packageItems: packageDoc.packageItems.map((item) => ({
+          ...item.toObject(),
+          image: formatImageUrl(req, item.image),
+          productId: item.productId
+            ? {
+              ...item.productId.toObject(),
+              images: formatImageArray(req, item.productId.images),
+            }
+            : null,
+        })),
+      },
+    });
   } catch (err) {
+    console.error("Get package by ID error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 }
-const Category = require("../../models/Category");
-// ...existing code...
 
-// @desc    Get all categories
-// @route   GET /api/products/categories
-// @access  Public
-
-// @desc    Get all categories
-// @route   GET /api/products/categories
-// @access  Public
 async function getAllCategories(req, res) {
   try {
     const categories = await Category.find({ isActive: true });
-    res.json({ success: true, data: categories });
+
+    res.json({
+      success: true,
+      data: categories,
+    });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error("Get shared categories error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 }
 
@@ -50,21 +102,52 @@ async function getAllCategories(req, res) {
 async function getCategoryById(req, res) {
   try {
     const { categoryId } = req.params;
+    const { page = 1, limit = 12 } = req.query;
+
     const category = await Category.findOne({ _id: categoryId, isActive: true });
     if (!category) {
       return res.status(404).json({ success: false, message: 'Category not found' });
     }
-    res.json({ success: true, data: category });
+
+    const Product = require("../../models/Product");
+
+    const skip = (page - 1) * limit;
+
+    const products = await Product.find({
+      category: categoryId,
+      status: "active"
+    })
+      .select("name price images slug productType featured specifications")
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip);
+
+    const totalProducts = await Product.countDocuments({
+      category: categoryId,
+      status: "active"
+    });
+
+    const categoryData = {
+      ...category.toObject(),
+      image: category.image ? { ...category.image, url: formatImageUrl(req, category.image.url) } : null,
+      products: products.map(p => ({
+        ...p.toObject(),
+        images: formatImageArray(req, p.images)
+      })),
+      productsPagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalProducts / limit),
+        totalProducts,
+        hasNext: page * limit < totalProducts,
+        hasPrev: page > 1,
+      }
+    };
+
+    res.json({ success: true, data: categoryData });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 }
-const Product = require("../../models/Product");
-const { validationResult } = require("express-validator");
-
-// @desc    Get all products (with filtering, sorting, pagination)
-// @route   GET /api/products
-// @access  Public
 const getAllProducts = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -162,7 +245,10 @@ const getAllProducts = async (req, res) => {
     res.json({
       success: true,
       data: {
-        products,
+        products: products.map(p => ({
+          ...p.toObject(),
+          images: formatImageArray(req, p.images)
+        })),
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(totalProducts / limit),
@@ -238,8 +324,27 @@ const getProductById = async (req, res) => {
     res.json({
       success: true,
       data: {
-        product,
-        relatedProducts,
+        product: {
+          ...product.toObject(),
+          images: formatImageArray(req, product.images),
+          ...(product.productType === "package" &&
+            product.packageItems && {
+            packageItems: product.packageItems.map((item) => ({
+              ...item.toObject(),
+              image: formatImageUrl(req, item.image),
+              productId: item.productId
+                ? {
+                  ...item.productId.toObject(),
+                  images: formatImageArray(req, item.productId.images),
+                }
+                : null,
+            })),
+          }),
+        },
+        relatedProducts: relatedProducts.map(p => ({
+          ...p.toObject(),
+          images: formatImageArray(req, p.images)
+        })),
       },
     });
   } catch (error) {
@@ -287,8 +392,14 @@ const getProductBySlug = async (req, res) => {
     res.json({
       success: true,
       data: {
-        product,
-        relatedProducts,
+        product: {
+          ...product.toObject(),
+          images: formatImageArray(req, product.images)
+        },
+        relatedProducts: relatedProducts.map(p => ({
+          ...p.toObject(),
+          images: formatImageArray(req, p.images)
+        })),
       },
     });
   } catch (error) {
@@ -319,7 +430,10 @@ const getFeaturedProducts = async (req, res) => {
     res.json({
       success: true,
       data: {
-        products,
+        products: products.map(p => ({
+          ...p.toObject(),
+          images: formatImageArray(req, p.images)
+        })),
       },
     });
   } catch (error) {
@@ -357,7 +471,10 @@ const getProductsByCategory = async (req, res) => {
     res.json({
       success: true,
       data: {
-        products,
+        products: products.map(p => ({
+          ...p.toObject(),
+          images: formatImageArray(req, p.images)
+        })),
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(totalProducts / limit),
@@ -408,7 +525,10 @@ const searchProducts = async (req, res) => {
     res.json({
       success: true,
       data: {
-        products,
+        products: products.map(p => ({
+          ...p.toObject(),
+          images: formatImageArray(req, p.images)
+        })),
         searchQuery: q,
         resultsCount: products.length,
       },
@@ -460,7 +580,10 @@ const getSearchSuggestions = async (req, res) => {
     res.json({
       success: true,
       data: {
-        products,
+        products: products.map(p => ({
+          ...p.toObject(),
+          images: formatImageArray(req, p.images)
+        })),
         categories: categories.slice(0, 5),
         brands: brands.slice(0, 5),
         searchQuery: q,
@@ -507,7 +630,20 @@ const getPackages = async (req, res) => {
     res.json({
       success: true,
       data: {
-        packages,
+        packages: packages.map((p) => ({
+          ...p.toObject(),
+          images: formatImageArray(req, p.images),
+          packageItems: p.packageItems.map((item) => ({
+            ...item.toObject(),
+            image: formatImageUrl(req, item.image),
+            productId: item.productId
+              ? {
+                ...item.productId.toObject(),
+                images: formatImageArray(req, item.productId.images),
+              }
+              : null,
+          })),
+        })),
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(totalPackages / limit),

@@ -65,8 +65,9 @@ const validateCreateProduct = [
     .withMessage("Product description must be between 10 and 2000 characters"),
 
   body("category")
+    .if(body("productType").equals("single"))
     .notEmpty()
-    .withMessage("Category is required")
+    .withMessage("Category is required for single products")
     .isLength({ max: 100 })
     .withMessage("Category cannot exceed 100 characters"),
 

@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 const {
   adminAuth,
-  requirePermission,
 } = require("../../middleware/adminAuth");
 
 const {

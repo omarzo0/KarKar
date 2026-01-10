@@ -1,4 +1,5 @@
 const Banner = require("../../models/Banner");
+const { formatImageUrl, stripBaseUrl } = require("../../utils/imageHelper");
 
 // Get all banners (admin)
 const getAllBanners = async (req, res) => {
@@ -39,7 +40,11 @@ const getAllBanners = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: banners,
+      data: banners.map(b => ({
+        ...b.toObject(),
+        image: formatImageUrl(req, b.image),
+        mobileImage: formatImageUrl(req, b.mobileImage)
+      })),
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / parseInt(limit)),
@@ -75,7 +80,11 @@ const getBannerById = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: banner,
+      data: {
+        ...banner.toObject(),
+        image: formatImageUrl(req, banner.image),
+        mobileImage: formatImageUrl(req, banner.mobileImage)
+      },
     });
   } catch (error) {
     console.error("Get banner by ID error:", error);
@@ -120,8 +129,8 @@ const createBanner = async (req, res) => {
     const banner = new Banner({
       title,
       subtitle,
-      image,
-      mobileImage,
+      image: stripBaseUrl(image),
+      mobileImage: stripBaseUrl(mobileImage),
       link,
       linkType,
       linkTarget,
@@ -144,7 +153,11 @@ const createBanner = async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Banner created successfully",
-      data: populatedBanner,
+      data: {
+        ...populatedBanner.toObject(),
+        image: formatImageUrl(req, populatedBanner.image),
+        mobileImage: formatImageUrl(req, populatedBanner.mobileImage)
+      },
     });
   } catch (error) {
     console.error("Create banner error:", error);
@@ -174,6 +187,10 @@ const updateBanner = async (req, res) => {
     // Add updatedBy field
     updateData.updatedBy = req.admin.adminId;
 
+    // Strip base URLs from images if present
+    if (updateData.image) updateData.image = stripBaseUrl(updateData.image);
+    if (updateData.mobileImage) updateData.mobileImage = stripBaseUrl(updateData.mobileImage);
+
     const updatedBanner = await Banner.findByIdAndUpdate(
       bannerId,
       updateData,
@@ -185,7 +202,11 @@ const updateBanner = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Banner updated successfully",
-      data: updatedBanner,
+      data: {
+        ...updatedBanner.toObject(),
+        image: formatImageUrl(req, updatedBanner.image),
+        mobileImage: formatImageUrl(req, updatedBanner.mobileImage)
+      },
     });
   } catch (error) {
     console.error("Update banner error:", error);
@@ -248,7 +269,11 @@ const toggleBannerStatus = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `Banner ${banner.isActive ? "activated" : "deactivated"} successfully`,
-      data: banner,
+      data: {
+        ...banner.toObject(),
+        image: formatImageUrl(req, banner.image),
+        mobileImage: formatImageUrl(req, banner.mobileImage)
+      },
     });
   } catch (error) {
     console.error("Toggle banner status error:", error);

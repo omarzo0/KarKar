@@ -114,7 +114,7 @@ const validateOrderQuery = [
 
   query("status")
     .optional()
-    .isIn(["pending", "confirmed", "shipped", "delivered", "cancelled"])
+    .isIn(["pending", "processing", "confirmed", "shipped", "delivered", "completed", "cancelled"])
     .withMessage("Invalid order status"),
 
   query("sortBy")
@@ -217,6 +217,8 @@ const validateGuestOrder = [
     .optional()
     .isLength({ max: 500 })
     .withMessage("Order notes cannot exceed 500 characters"),
+
+  body("couponCode").optional().isString().trim(),
 ];
 
 const validateGuestTracking = [

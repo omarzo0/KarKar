@@ -1,0 +1,258 @@
+{
+    "info": {
+        "name": "MK Dental - Guest Payment Flow",
+        "description": "Collection for testing guest order creation and payment processing",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+        {
+            "key": "baseUrl",
+            "value": "http://localhost:5001/api"
+        },
+        {
+            "key": "guestEmail",
+            "value": "guest@example.com"
+        },
+        {
+            "key": "paymentId",
+            "value": ""
+        },
+        {
+            "key": "orderId",
+            "value": ""
+        },
+        {
+            "key": "orderNumber",
+            "value": ""
+        }
+    ],
+    "item": [
+        {
+            "name": "1. Get Featured Products",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/products/featured",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "products",
+                        "featured"
+                    ]
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "exec": [
+                            "const response = pm.response.json();",
+                            "if (response.success && response.data.products.length > 0) {",
+                            "    pm.collectionVariables.set('productId', response.data.products[0]._id);",
+                            "    console.log('Product ID saved:', response.data.products[0]._id);",
+                            "}"
+                        ],
+                        "type": "text/javascript"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "2. Get Available Payment Methods",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/user/payments/methods",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "user",
+                        "payments",
+                        "methods"
+                    ]
+                }
+            }
+        },
+        {
+            "name": "3. Create Guest Order",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"customerInfo\": {\n    \"email\": \"{{guestEmail}}\",\n    \"firstName\": \"John\",\n    \"lastName\": \"Doe\",\n    \"phone\": \"1234567890\"\n  },\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"shippingAddress\": {\n    \"street\": \"123 Test Street\",\n    \"city\": \"Cairo\",\n    \"state\": \"Cairo\",\n    \"zipCode\": \"12345\",\n    \"country\": \"Egypt\"\n  },\n  \"paymentMethod\": \"credit_card\",\n  \"shippingMethod\": \"standard\"\n}"
+                },
+                "url": {
+                    "raw": "{{baseUrl}}/user/orders/guest",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "user",
+                        "orders",
+                        "guest"
+                    ]
+                }
+            },
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "exec": [
+                            "const response = pm.response.json();",
+                            "if (response.success) {",
+                            "    pm.collectionVariables.set('paymentId', response.data.payment.id);",
+                            "    pm.collectionVariables.set('orderId', response.data.order._id);",
+                            "    pm.collectionVariables.set('orderNumber', response.data.order.orderNumber);",
+                            "    console.log('Payment ID:', response.data.payment.id);",
+                            "    console.log('Order Number:', response.data.order.orderNumber);",
+                            "}"
+                        ],
+                        "type": "text/javascript"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "4. Process Guest Payment",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"email\": \"{{guestEmail}}\",\n  \"paymentToken\": \"tok_test_1234567890\"\n}"
+                },
+                "url": {
+                    "raw": "{{baseUrl}}/user/payments/guest/{{paymentId}}/process",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "user",
+                        "payments",
+                        "guest",
+                        "{{paymentId}}",
+                        "process"
+                    ]
+                }
+            }
+        },
+        {
+            "name": "5. Get Guest Payment Details",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/user/payments/guest/{{paymentId}}?email={{guestEmail}}",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "user",
+                        "payments",
+                        "guest",
+                        "{{paymentId}}"
+                    ],
+                    "query": [
+                        {
+                            "key": "email",
+                            "value": "{{guestEmail}}"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "6. Track Guest Order",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/user/orders/track/{{orderNumber}}?email={{guestEmail}}",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "user",
+                        "orders",
+                        "track",
+                        "{{orderNumber}}"
+                    ],
+                    "query": [
+                        {
+                            "key": "email",
+                            "value": "{{guestEmail}}"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "7. Validate Coupon (Guest)",
+            "request": {
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"code\": \"WELCOME2026\",\n  \"email\": \"{{guestEmail}}\",\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"price\": 100,\n      \"quantity\": 1\n    }\n  ]\n}"
+                },
+                "url": {
+                    "raw": "{{baseUrl}}/user/coupons/validate",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "user",
+                        "coupons",
+                        "validate"
+                    ]
+                }
+            }
+        },
+        {
+            "name": "Security Test - Wrong Email",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "{{baseUrl}}/user/payments/guest/{{paymentId}}?email=wrong@email.com",
+                    "host": [
+                        "{{baseUrl}}"
+                    ],
+                    "path": [
+                        "user",
+                        "payments",
+                        "guest",
+                        "{{paymentId}}"
+                    ],
+                    "query": [
+                        {
+                            "key": "email",
+                            "value": "wrong@email.com"
+                        }
+                    ]
+                },
+                "description": "This should return 403 Forbidden - testing security"
+            }
+        }
+    ]
+}

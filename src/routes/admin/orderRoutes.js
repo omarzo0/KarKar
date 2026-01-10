@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { adminAuth, requirePermission, checkPermission } = require("../../middleware/adminAuth");
+const { adminAuth } = require("../../middleware/adminAuth");
 
 const {
   getAllOrders,
@@ -32,7 +32,6 @@ router.use(adminAuth);
 // Get all orders with filtering and pagination
 router.get(
   "/",
-  checkPermission("canManageOrders"),
   validateOrderQuery,
   getAllOrders
 );
@@ -40,7 +39,6 @@ router.get(
 // Get order statistics
 router.get(
   "/stats/overview",
-  checkPermission("canViewAnalytics"),
   validateOrderAnalytics,
   getOrderStats
 );
@@ -48,7 +46,6 @@ router.get(
 // Export orders
 router.get(
   "/export",
-  checkPermission("canManageOrders"),
   validateOrderExport,
   exportOrders
 );
@@ -56,18 +53,16 @@ router.get(
 // Get order analytics
 router.get(
   "/analytics",
-  checkPermission("canViewAnalytics"),
   validateOrderAnalytics,
   getOrderAnalytics
 );
 
 // Get specific order by ID
-router.get("/:id", checkPermission("canManageOrders"), getOrderById);
+router.get("/:id", getOrderById);
 
 // Update order status
 router.put(
   "/:id/status",
-  checkPermission("canManageOrders"),
   validateOrderStatusUpdate,
   updateOrderStatus
 );
@@ -75,7 +70,6 @@ router.put(
 // Update payment status
 router.put(
   "/:id/payment-status",
-  checkPermission("canManageOrders"),
   validatePaymentStatusUpdate,
   updatePaymentStatus
 );
@@ -83,38 +77,33 @@ router.put(
 // Process refund
 router.post(
   "/:id/refund",
-  checkPermission("canManagePayments"),
   processRefund
 );
 
 // Cancel order
 router.post(
   "/:id/cancel",
-  checkPermission("canManageOrders"),
   cancelOrder
 );
 
 // Order notes
 router.get(
   "/:id/notes",
-  checkPermission("canManageOrders"),
   getOrderNotes
 );
 
 router.post(
   "/:id/notes",
-  checkPermission("canManageOrders"),
   addOrderNote
 );
 
 // Generate invoice
 router.get(
   "/:id/invoice",
-  checkPermission("canManageOrders"),
   generateInvoice
 );
 
 // Delete order (soft delete)
-router.delete("/:id", checkPermission("canManageOrders"), deleteOrder);
+router.delete("/:id", deleteOrder);
 
 module.exports = router;

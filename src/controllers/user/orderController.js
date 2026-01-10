@@ -1,10 +1,11 @@
-// controllers/user/orderController.js
+const mongoose = require("mongoose");
 const Order = require("../../models/Order");
 const Product = require("../../models/Product");
 const Cart = require("../../models/Cart");
 const Payment = require("../../models/Payment");
 const ShippingFee = require("../../models/ShippingFee");
 const { validationResult } = require("express-validator");
+const { formatImageArray, formatImageUrl } = require("../../utils/imageHelper");
 
 // @desc    Get user's orders
 // @route   GET /api/user/orders
@@ -62,7 +63,24 @@ const getUserOrders = async (req, res) => {
     res.json({
       success: true,
       data: {
-        orders,
+        orders: orders.map(order => ({
+          ...order.toObject(),
+          items: order.items.map(item => ({
+            ...item.toObject(),
+            image: formatImageUrl(req, item.image),
+            packageInfo: item.packageInfo ? {
+              ...item.packageInfo.toObject(),
+              items: item.packageInfo.items.map(pkgItem => ({
+                ...pkgItem.toObject(),
+                image: formatImageUrl(req, pkgItem.image)
+              }))
+            } : item.packageInfo,
+            productId: item.productId ? {
+              ...item.productId.toObject(),
+              images: formatImageArray(req, item.productId.images)
+            } : item.productId
+          }))
+        })),
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(totalOrders / limit),
@@ -132,9 +150,29 @@ const getOrderById = async (req, res) => {
     res.json({
       success: true,
       data: {
-        order,
+        order: {
+          ...order.toObject(),
+          items: order.items.map(item => ({
+            ...item.toObject(),
+            image: formatImageUrl(req, item.image),
+            packageInfo: item.packageInfo ? {
+              ...item.packageInfo.toObject(),
+              items: item.packageInfo.items.map(pkgItem => ({
+                ...pkgItem.toObject(),
+                image: formatImageUrl(req, pkgItem.image)
+              }))
+            } : item.packageInfo,
+            productId: item.productId ? {
+              ...item.productId.toObject(),
+              images: formatImageArray(req, item.productId.images)
+            } : item.productId
+          }))
+        },
         payment: payment || null,
-        relatedProducts,
+        relatedProducts: relatedProducts.map(p => ({
+          ...p.toObject(),
+          images: formatImageArray(req, p.images)
+        })),
       },
     });
   } catch (error) {
@@ -171,9 +209,15 @@ const createOrder = async (req, res) => {
       notes,
     } = req.body;
 
-    const resolvedBillingAddress = (() => {
-      if (!shippingAddress) return billingAddress;
+    if (!shippingAddress) {
+      return res.status(400).json({
+        success: false,
+        message: "Shipping address is required",
+      });
+    }
 
+    const resolvedBillingAddress = (() => {
+      // Now we can safely assume shippingAddress exists
       if (!billingAddress || billingAddress.useShippingAddress) {
         return {
           street: shippingAddress.street,
@@ -192,7 +236,6 @@ const createOrder = async (req, res) => {
         country: billingAddress.country || shippingAddress.country,
       };
     })();
-
     const resolvedNotes = (() => {
       if (!notes) return undefined;
 
@@ -243,11 +286,11 @@ const createOrder = async (req, res) => {
 
     // Build order items
     let itemsToProcess = items || [];
+    let cart = null;
 
-    // Fallback to cart for authenticated users if no items provided in body
-    if (itemsToProcess.length === 0 && userId) {
-      const cart = await Cart.findOne({ userId }).populate("items.productId");
-      if (cart && cart.items.length > 0) {
+    if (userId) {
+      cart = await Cart.findOne({ userId }).populate("items.productId");
+      if (itemsToProcess.length === 0 && cart && cart.items.length > 0) {
         itemsToProcess = cart.items;
       }
     }
@@ -314,7 +357,7 @@ const createOrder = async (req, res) => {
         price: product.price,
         quantity: item.quantity,
         subtotal: itemTotal,
-        image: product.images?.[0],
+        image: formatImageUrl(req, product.images?.[0]),
         productType: product.productType || "single",
       };
 
@@ -330,7 +373,7 @@ const createOrder = async (req, res) => {
             name: item.name,
             quantity: item.quantity,
             price: item.price,
-            image: item.image,
+            image: formatImageUrl(req, item.image),
           })) || [],
         };
       }
@@ -350,8 +393,7 @@ const createOrder = async (req, res) => {
     }
 
     // Calculate totals
-    let shippingFee = 0; // Default to 0, will be calculated or overridden
-    // Fallback if no shipping location details selected (can happen if UI doesn't force it)
+    let shippingFee = 0;
 
     // Calculate shipping fee based on governorate (shippingAddress.state)
     const governorateFee = await ShippingFee.findOne({
@@ -360,27 +402,50 @@ const createOrder = async (req, res) => {
     });
 
     if (governorateFee) {
-      shippingFee = governorateFee.shippingFee;
+      shippingFee = governorateFee.fee;
 
       // Check for free shipping threshold
       if (governorateFee.freeShippingThreshold !== null && subtotal >= governorateFee.freeShippingThreshold) {
         shippingFee = 0;
       }
     } else {
-      // Fallback or error? For now, default to standard calculation or 0 if not found
-      // Check for "Cairo" specific logic mentioned by user: "only cairo and give me 0"
-      // If db lookup fails, we maybe shouldn't block the order, but warn or use default.
-      // However, user requested dynamic fees. If not found, let's keep it 0 or standard.
       shippingFee = calculateShippingFee(shippingMethod, subtotal);
     }
 
-    // Check for free shipping coupon (if applicable, assuming coupon logic is handled elsewhere or simplified here)
-    // if (cart.coupon && (cart.coupon.freeShipping || cart.coupon.discountType === "free_shipping")) {
-    //   shippingFee = 0;
-    // }
+    // Check for coupon and calculate discount
+    let discount = 0;
+    let couponInfo = null;
+
+    if (cart && cart.coupon && cart.coupon.code) {
+      const Coupon = require("../../models/Coupon");
+      const coupon = await Coupon.findById(cart.coupon.couponId);
+
+      if (coupon) {
+        // Validate coupon one last time
+        const canUse = await coupon.canBeUsedBy(userId, subtotal, orderItems);
+        if (canUse.valid) {
+          const discountInfo = coupon.calculateDiscount(subtotal, orderItems);
+          discount = discountInfo.discount;
+
+          if (discountInfo.freeShipping) {
+            shippingFee = 0;
+          }
+
+          couponInfo = {
+            code: coupon.code,
+            couponId: coupon._id,
+            discount: discount,
+            discountValue: coupon.discountValue,
+            discountType: coupon.discountType,
+          };
+
+          // Record usage
+          await coupon.recordUsage(userId);
+        }
+      }
+    }
 
     const taxAmount = calculateTax(subtotal, shippingAddress.state);
-    const discount = 0; // Coupons can be added later to the unified flow
     const total = subtotal + shippingFee + taxAmount - discount;
 
     // Generate order number
@@ -412,17 +477,10 @@ const createOrder = async (req, res) => {
         ? shippingAddress
         : billingAddress,
       shippingMethod,
-      // shippingLocation: cart.selectedShippingFee?.name, // This was cart-specific, remove for unified flow
       paymentMethod,
       customerNote: typeof notes === "string" ? notes : undefined,
       notes: Array.isArray(notes) ? notes : [],
-      // coupon: cart.coupon ? { // This was cart-specific, remove for unified flow
-      //   code: cart.coupon.code,
-      //   couponId: cart.coupon.couponId,
-      //   discount: discount,
-      //   discountValue: cart.coupon.discountValue,
-      //   discountType: cart.coupon.discountType,
-      // } : undefined,
+      coupon: couponInfo,
       status: "pending",
       paymentStatus: "pending",
     });
@@ -466,17 +524,34 @@ const createOrder = async (req, res) => {
     const { sendOrderConfirmationEmail } = require("../../services/emailService");
     sendOrderConfirmationEmail(order).catch(err => console.error("Failed to send order confirmation email:", err));
 
+    const formattedOrder = {
+      ...order.toObject(),
+      items: order.items.map(item => ({
+        ...item.toObject(),
+        image: formatImageUrl(req, item.image),
+        packageInfo: item.packageInfo ? {
+          ...item.packageInfo.toObject(),
+          items: item.packageInfo.items.map(pkgItem => ({
+            ...pkgItem.toObject(),
+            image: formatImageUrl(req, pkgItem.image)
+          }))
+        } : undefined
+      }))
+    };
+
     res.status(201).json({
       success: true,
       message: "Order created successfully",
       data: {
-        order,
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        order: formattedOrder,
         payment: {
           id: payment._id,
           amount: payment.amount,
           paymentMethod: payment.paymentMethod,
         },
-        nextStep: "process_payment",
+        nextStep: paymentMethod === "cod" ? "order_success" : "process_payment",
       },
     });
   } catch (error) {
@@ -1006,7 +1081,16 @@ const createGuestOrder = async (req, res) => {
       shippingMethod = "standard",
       paymentMethod,
       notes,
+      couponCode, // Added couponCode
     } = req.body;
+
+    // Validate shipping address is provided
+    if (!shippingAddress) {
+      return res.status(400).json({
+        success: false,
+        message: "Shipping address is required",
+      });
+    }
 
     // Validate required guest info
     if (!customerInfo?.email || !customerInfo?.firstName || !customerInfo?.lastName) {
@@ -1090,7 +1174,7 @@ const createGuestOrder = async (req, res) => {
             name: pkgItem.name,
             quantity: pkgItem.quantity,
             price: pkgItem.price,
-            image: pkgItem.image,
+            image: formatImageUrl(req, pkgItem.image),
           })) || [],
         };
       }
@@ -1110,12 +1194,103 @@ const createGuestOrder = async (req, res) => {
     }
 
     // Calculate totals
-    const shippingFee = calculateShippingFee(shippingMethod, subtotal);
+    let shippingFee = calculateShippingFee(shippingMethod, subtotal);
+
+    // Check for governorate specific shipping fee
+    const governorateFee = await ShippingFee.findOne({
+      name: { $regex: new RegExp(`^${shippingAddress.state}$`, "i") },
+      isActive: true
+    });
+    if (governorateFee) {
+      shippingFee = governorateFee.fee;
+      if (governorateFee.freeShippingThreshold !== null && subtotal >= governorateFee.freeShippingThreshold) {
+        shippingFee = 0;
+      }
+    }
+
+    // Coupon logic for guest
+    let discount = 0;
+    let couponInfo = null;
+    if (couponCode) {
+      const Coupon = require("../../models/Coupon");
+      const coupon = await Coupon.findValidByCode(couponCode);
+      if (coupon) {
+        // Prepare items for validation
+        const canUse = await coupon.canBeUsedBy(null, subtotal, orderItems, customerInfo.email);
+
+        if (canUse.valid) {
+          const discountInfo = coupon.calculateDiscount(subtotal, orderItems);
+          discount = discountInfo.discount;
+          if (discountInfo.freeShipping) {
+            shippingFee = 0;
+          }
+          couponInfo = {
+            code: coupon.code,
+            couponId: coupon._id,
+            discount: discount,
+            discountValue: coupon.discountValue,
+            discountType: coupon.discountType,
+          };
+        }
+      }
+    }
+
     const taxAmount = calculateTax(subtotal, shippingAddress.state);
-    const total = subtotal + shippingFee + taxAmount;
+    const total = subtotal + shippingFee + taxAmount - discount;
 
     // Generate order number
     const orderNumber = await generateOrderNumber();
+
+    // Ensure billingAddress and notes are resolved (defensive fallback)
+    const resolvedBillingAddress = (() => {
+      if (!billingAddress || billingAddress.useShippingAddress) {
+        return {
+          street: shippingAddress.street,
+          city: shippingAddress.city,
+          state: shippingAddress.state,
+          zipCode: shippingAddress.zipCode,
+          country: shippingAddress.country,
+        };
+      }
+
+      return {
+        street: billingAddress.street || shippingAddress.street,
+        city: billingAddress.city || shippingAddress.city,
+        state: billingAddress.state || shippingAddress.state,
+        zipCode: billingAddress.zipCode || shippingAddress.zipCode,
+        country: billingAddress.country || shippingAddress.country,
+      };
+    })();
+
+    const resolvedNotes = (() => {
+      if (!notes) return undefined;
+
+      if (typeof notes === "string") {
+        const trimmed = notes.trim();
+        return trimmed ? [{ content: trimmed }] : undefined;
+      }
+
+      if (Array.isArray(notes)) {
+        const normalized = notes
+          .map((n) => {
+            if (!n) return null;
+            if (typeof n === "string") {
+              const trimmed = n.trim();
+              return trimmed ? { content: trimmed } : null;
+            }
+            if (typeof n === "object" && typeof n.content === "string") {
+              const trimmed = n.content.trim();
+              return trimmed ? { ...n, content: trimmed } : null;
+            }
+            return null;
+          })
+          .filter(Boolean);
+
+        return normalized.length > 0 ? normalized : undefined;
+      }
+
+      return undefined;
+    })();
 
     // Create guest order
     const order = new Order({
@@ -1132,7 +1307,7 @@ const createGuestOrder = async (req, res) => {
         subtotal,
         tax: taxAmount,
         shipping: shippingFee,
-        discount: 0,
+        discount: discount,
         total,
       },
       shippingAddress,
@@ -1140,11 +1315,21 @@ const createGuestOrder = async (req, res) => {
       shippingMethod,
       paymentMethod,
       notes: resolvedNotes,
+      coupon: couponInfo,
       status: "pending",
       paymentStatus: "pending",
     });
 
     await order.save();
+
+    // Record coupon usage after successful save
+    if (couponInfo && couponInfo.couponId) {
+      const Coupon = require("../../models/Coupon");
+      const coupon = await Coupon.findById(couponInfo.couponId);
+      if (coupon) {
+        await coupon.recordUsage(null, customerInfo.email);
+      }
+    }
 
     // Update product inventory
     await updateProductInventory(orderItems);
@@ -1160,17 +1345,34 @@ const createGuestOrder = async (req, res) => {
     });
     await payment.save();
 
+    const formattedOrder = {
+      ...order.toObject(),
+      items: order.items.map(item => ({
+        ...item.toObject(),
+        image: formatImageUrl(req, item.image),
+        packageInfo: item.packageInfo ? {
+          ...item.packageInfo.toObject(),
+          items: item.packageInfo.items.map(pkgItem => ({
+            ...pkgItem.toObject(),
+            image: formatImageUrl(req, pkgItem.image)
+          }))
+        } : undefined
+      }))
+    };
+
     res.status(201).json({
       success: true,
       message: "Order created successfully",
       data: {
-        order,
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        order: formattedOrder,
         payment: {
           id: payment._id,
           amount: payment.amount,
           paymentMethod: payment.paymentMethod,
         },
-        nextStep: "process_payment",
+        nextStep: paymentMethod === "cod" ? "order_success" : "process_payment",
         guestOrderTracking: {
           orderNumber: order.orderNumber,
           email: customerInfo.email,
@@ -1187,7 +1389,6 @@ const createGuestOrder = async (req, res) => {
     });
   }
 };
-
 // @desc    Track order by order number (for guests)
 // @route   GET /api/user/orders/track/:orderNumber
 // @access  Public (with email verification)

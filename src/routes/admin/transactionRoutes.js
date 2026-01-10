@@ -1,7 +1,7 @@
 // routes/admin/transactionRoutes.js
 const express = require("express");
 const router = express.Router();
-const { adminAuth, requirePermission } = require("../../middleware/adminAuth");
+const { adminAuth } = require("../../middleware/adminAuth");
 
 const {
   validateCreateTransaction,
@@ -32,21 +32,18 @@ router.use(adminAuth);
 // Transaction listing and search
 router.get(
   "/",
-  requirePermission("canManagePayments"),
   validateTransactionQuery,
   getAllTransactions
 );
 
 router.get(
   "/search",
-  requirePermission("canManagePayments"),
   validateTransactionSearch,
   searchTransactions
 );
 
 router.get(
   "/analytics",
-  requirePermission("canViewAnalytics"),
   validateTransactionAnalytics,
   getTransactionAnalytics
 );
@@ -54,7 +51,6 @@ router.get(
 // Create transaction
 router.post(
   "/",
-  requirePermission("canManagePayments"),
   validateCreateTransaction,
   createTransaction
 );
@@ -62,7 +58,6 @@ router.post(
 // Bulk operations
 router.post(
   "/bulk",
-  requirePermission("canManagePayments"),
   validateBulkTransactionOperation,
   bulkTransactionOperation
 );
@@ -70,21 +65,18 @@ router.post(
 // Get transactions by user
 router.get(
   "/user/:userId",
-  requirePermission("canManagePayments"),
   getTransactionsByUser
 );
 
 // Single transaction operations
 router.get(
   "/:transactionId",
-  requirePermission("canManagePayments"),
   validateTransactionId,
   getTransactionById
 );
 
 router.put(
   "/:transactionId/status",
-  requirePermission("canManagePayments"),
   validateTransactionId,
   validateUpdateTransactionStatus,
   updateTransactionStatus
@@ -92,7 +84,6 @@ router.put(
 
 router.post(
   "/:transactionId/refund",
-  requirePermission("canManagePayments"),
   validateTransactionId,
   validateRefundTransaction,
   processRefundTransaction

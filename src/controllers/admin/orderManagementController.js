@@ -3,6 +3,7 @@ const User = require("../../models/User");
 const Product = require("../../models/Product");
 const Payment = require("../../models/Payment");
 const mongoose = require("mongoose");
+const { formatImageArray, formatImageUrl } = require("../../utils/imageHelper");
 
 /**
  * @desc    Get all orders with filtering, pagination, and sorting
@@ -79,7 +80,20 @@ const getAllOrders = async (req, res) => {
     res.json({
       success: true,
       data: {
-        orders,
+        orders: orders.map(order => ({
+          ...order,
+          items: (order.items || []).map(item => ({
+            ...item,
+            image: formatImageUrl(req, item.image),
+            packageInfo: item.packageInfo ? {
+              ...item.packageInfo,
+              items: (item.packageInfo.items || []).map(pkgItem => ({
+                ...pkgItem,
+                image: formatImageUrl(req, pkgItem.image)
+              }))
+            } : item.packageInfo
+          }))
+        })),
         pagination: {
           currentPage: parseInt(page),
           totalPages,
@@ -141,7 +155,24 @@ const getOrderById = async (req, res) => {
     res.json({
       success: true,
       data: {
-        order,
+        order: {
+          ...order.toObject(),
+          items: (order.items || []).map(item => ({
+            ...item.toObject(),
+            image: formatImageUrl(req, item.image),
+            packageInfo: item.packageInfo ? {
+              ...item.packageInfo.toObject(),
+              items: (item.packageInfo.items || []).map(pkgItem => ({
+                ...pkgItem.toObject(),
+                image: formatImageUrl(req, pkgItem.image)
+              }))
+            } : item.packageInfo,
+            productId: item.productId ? {
+              ...item.productId.toObject(),
+              images: formatImageArray(req, item.productId.images)
+            } : item.productId
+          }))
+        },
         payment,
       },
     });
@@ -174,9 +205,11 @@ const updateOrderStatus = async (req, res) => {
 
     const validStatuses = [
       "pending",
+      "processing",
       "confirmed",
       "shipped",
       "delivered",
+      "completed",
       "cancelled",
       "returned",
     ];
@@ -1124,20 +1157,20 @@ async function generateInvoice(req, res) {
       invoiceDate: new Date(),
       orderNumber: order.orderNumber,
       orderDate: order.createdAt,
-      
+
       // Customer details
       customer: {
         name: `${order.customer.firstName} ${order.customer.lastName}`,
         email: order.customer.email,
         phone: order.customer.phone || "",
       },
-      
+
       // Billing address
       billingAddress: order.shippingAddress,
-      
+
       // Shipping address
       shippingAddress: order.shippingAddress,
-      
+
       // Items
       items: order.items.map((item) => ({
         name: item.name,
@@ -1146,18 +1179,18 @@ async function generateInvoice(req, res) {
         unitPrice: item.price,
         subtotal: item.subtotal,
       })),
-      
+
       // Totals
       subtotal: order.totals.subtotal,
       discount: order.totals.discount || 0,
       tax: order.totals.tax || 0,
       shipping: order.totals.shipping || 0,
       total: order.totals.total,
-      
+
       // Payment info
       paymentStatus: order.paymentStatus,
       paymentMethod: order.paymentMethod || "N/A",
-      
+
       // Company info (should come from settings)
       company: {
         name: "MK Dental",
@@ -1166,7 +1199,7 @@ async function generateInvoice(req, res) {
         email: "",
         website: "",
       },
-      
+
       // Notes
       notes: order.notes?.filter((n) => !n.isPrivate).map((n) => n.content) || [],
     };

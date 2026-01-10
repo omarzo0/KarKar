@@ -39,10 +39,6 @@ const validateAdminRegister = [
     .isMobilePhone()
     .withMessage("Please provide a valid phone number"),
 
-  body("permissions")
-    .optional()
-    .isObject()
-    .withMessage("Permissions must be an object"),
 ];
 
 const validateAdminLogin = [

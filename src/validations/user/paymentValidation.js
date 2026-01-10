@@ -41,11 +41,11 @@ const validateCreatePayment = [
       const settings = await PaymentSettings.getSettings();
       const methods = settings?.methods || [];
       const method = methods.find(m => m.name === paymentMethod && m.enabled);
-      
+
       if (!method) {
         throw new Error(`Payment method '${paymentMethod}' is not available`);
       }
-      
+
       return true;
     }),
 
@@ -201,6 +201,78 @@ const validatePaymentQuery = [
     .withMessage("Sort order must be either asc or desc"),
 ];
 
+// Guest process payment validation
+const validateGuestProcessPayment = [
+  param("paymentId")
+    .isMongoId()
+    .withMessage("Valid payment ID is required")
+    .custom(async (paymentId, { req }) => {
+      const payment = await Payment.findById(paymentId);
+      if (!payment) {
+        throw new Error("Payment not found");
+      }
+
+      const { email } = req.body;
+      if (!email) {
+        throw new Error("Email is required for guest payment processing");
+      }
+
+      // Verify email matches the payment record
+      const order = await Order.findById(payment.orderId);
+      const paymentEmail = payment.customerEmail || order?.customer?.email;
+
+      if (!paymentEmail || paymentEmail.toLowerCase() !== email.toLowerCase()) {
+        throw new Error("Access denied: Email does not match this payment");
+      }
+
+      return true;
+    }),
+
+  body("email")
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Valid email is required"),
+
+  body("paymentToken")
+    .optional()
+    .isLength({ min: 10, max: 500 })
+    .withMessage("Payment token must be between 10 and 500 characters"),
+];
+
+// Guest payment ID validation (for fetching payment details)
+const validateGuestPaymentId = [
+  param("paymentId")
+    .isMongoId()
+    .withMessage("Valid payment ID is required")
+    .custom(async (paymentId, { req }) => {
+      const payment = await Payment.findById(paymentId);
+      if (!payment) {
+        throw new Error("Payment not found");
+      }
+
+      const { email } = req.query;
+      if (!email) {
+        throw new Error("Email is required to access guest payment");
+      }
+
+      const order = await Order.findById(payment.orderId);
+      const paymentEmail = payment.customerEmail || order?.customer?.email;
+
+      if (!paymentEmail || paymentEmail.toLowerCase() !== email.toLowerCase()) {
+        throw new Error("Access denied: Email does not match this payment");
+      }
+
+      return true;
+    }),
+
+  query("email")
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Valid email is required"),
+];
+
 module.exports = {
   validateCreatePayment,
   validateProcessPayment,
@@ -208,4 +280,6 @@ module.exports = {
   validatePaymentQuery,
   validatePaymentMethodCheck,
   validateOrderId,
+  validateGuestProcessPayment,
+  validateGuestPaymentId,
 };

@@ -1,6 +1,7 @@
 const Cart = require("../../models/Cart");
 const Product = require("../../models/Product");
 const { validationResult } = require("express-validator");
+const { formatImageArray, formatImageUrl } = require("../../utils/imageHelper");
 
 // @desc    Get user's cart
 // @route   GET /api/cart
@@ -44,7 +45,7 @@ const getCart = async (req, res) => {
     res.json({
       success: true,
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
       },
     });
   } catch (error) {
@@ -88,7 +89,7 @@ const addToCart = async (req, res) => {
         path: "packageItems.productId",
         select: "name price images inventory status",
       });
-      
+
       // Check if all package items are available
       for (const pkgItem of product.packageItems) {
         if (!pkgItem.productId || pkgItem.productId.status !== "active") {
@@ -152,7 +153,7 @@ const addToCart = async (req, res) => {
       success: true,
       message: "Item added to cart successfully",
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
       },
     });
   } catch (error) {
@@ -236,7 +237,7 @@ const updateCartItem = async (req, res) => {
       success: true,
       message: "Cart item updated successfully",
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
       },
     });
   } catch (error) {
@@ -291,7 +292,7 @@ const removeFromCart = async (req, res) => {
       success: true,
       message: "Item removed from cart successfully",
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
       },
     });
   } catch (error) {
@@ -324,7 +325,7 @@ const clearCart = async (req, res) => {
       success: true,
       message: "Cart cleared successfully",
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
       },
     });
   } catch (error) {
@@ -407,7 +408,7 @@ const applyCoupon = async (req, res) => {
       success: true,
       message: coupon.message,
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
         coupon: {
           code: couponCode.toUpperCase(),
           discountType: coupon.discountType,
@@ -457,7 +458,7 @@ const removeCoupon = async (req, res) => {
       success: true,
       message: "Coupon removed successfully",
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
       },
     });
   } catch (error) {
@@ -513,7 +514,7 @@ const updateShippingAddress = async (req, res) => {
       success: true,
       message: "Shipping address updated successfully",
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
       },
     });
   } catch (error) {
@@ -558,7 +559,7 @@ const updateCartNotes = async (req, res) => {
       success: true,
       message: "Cart notes updated successfully",
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
       },
     });
   } catch (error) {
@@ -575,23 +576,23 @@ const updateCartNotes = async (req, res) => {
 const validateCoupon = async (couponCode, cartTotal, userId, cartItems = []) => {
   try {
     const Coupon = require("../../models/Coupon");
-    
+
     // Find valid coupon by code
     const coupon = await Coupon.findValidByCode(couponCode);
-    
+
     if (!coupon) {
       return { valid: false, message: "Invalid or expired coupon code" };
     }
-    
+
     // Check if coupon can be used by this user
     const canUse = await coupon.canBeUsedBy(userId, cartTotal, cartItems);
     if (!canUse.valid) {
       return { valid: false, message: canUse.message };
     }
-    
+
     // Calculate discount
     const discountInfo = coupon.calculateDiscount(cartTotal, cartItems);
-    
+
     return {
       valid: true,
       message: "Coupon applied successfully",
@@ -672,7 +673,7 @@ const updateSelectedShippingFee = async (req, res) => {
     // Get shipping fee details
     const ShippingFee = require("../../models/ShippingFee");
     const shippingFee = await ShippingFee.findOne({ _id: shippingFeeId, isActive: true });
-    
+
     if (!shippingFee) {
       return res.status(404).json({
         success: false,
@@ -690,7 +691,7 @@ const updateSelectedShippingFee = async (req, res) => {
       name: shippingFee.name,
       fee: actualFee,
     };
-    
+
     cart.summary.shippingFee = actualFee;
     await cart.calculateTotals();
     await cart.save();
@@ -700,7 +701,7 @@ const updateSelectedShippingFee = async (req, res) => {
       success: true,
       message: "Shipping option updated successfully",
       data: {
-        cart,
+        cart: formatCartResponse(req, cart),
         selectedShipping: {
           name: shippingFee.name,
           fee: actualFee,
@@ -717,6 +718,30 @@ const updateSelectedShippingFee = async (req, res) => {
       error: error.message,
     });
   }
+};
+
+// Helper function to format cart for response
+const formatCartResponse = (req, cart) => {
+  if (!cart) return null;
+  const cartObj = cart.toObject();
+
+  if (cartObj.items) {
+    cartObj.items = cartObj.items.map(item => ({
+      ...item,
+      productId: item.productId ? {
+        ...item.productId,
+        images: formatImageArray(req, item.productId.images),
+        ...(item.productId.productType === 'package' && item.productId.packageItems && {
+          packageItems: item.productId.packageItems.map(pkgItem => ({
+            ...pkgItem,
+            image: formatImageUrl(req, pkgItem.image)
+          }))
+        })
+      } : null
+    }));
+  }
+
+  return cartObj;
 };
 
 module.exports = {

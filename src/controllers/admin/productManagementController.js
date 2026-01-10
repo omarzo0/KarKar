@@ -3,6 +3,8 @@ const Product = require("../../models/Product");
 const Order = require("../../models/Order");
 const { validationResult } = require("express-validator");
 const mongoose = require("mongoose");
+const { formatImageArray, formatImageUrl, stripBaseUrl, stripImageArray } = require("../../utils/imageHelper");
+const Category = require("../../models/Category");
 
 // @desc    Get all products with advanced filtering and pagination
 // @route   GET /api/admin/products
@@ -132,6 +134,14 @@ const getAllProducts = async (req, res) => {
 
         return {
           ...product.toObject(),
+          images: formatImageArray(req, product.images),
+          ...(product.productType === "package" &&
+            product.packageItems && {
+            packageItems: product.packageItems.map((item) => ({
+              ...item.toObject(),
+              image: formatImageUrl(req, item.image),
+            })),
+          }),
           sales: salesData[0] || {
             totalSold: 0,
             totalRevenue: 0,
@@ -351,7 +361,23 @@ const getProductById = async (req, res) => {
     res.json({
       success: true,
       data: {
-        product,
+        product: {
+          ...product.toObject(),
+          images: formatImageArray(req, product.images),
+          ...(product.productType === "package" &&
+            product.packageItems && {
+            packageItems: product.packageItems.map((item) => ({
+              ...item.toObject(),
+              image: formatImageUrl(req, item.image),
+              productId: item.productId
+                ? {
+                  ...item.productId.toObject(),
+                  images: formatImageArray(req, item.productId.images),
+                }
+                : null,
+            })),
+          }),
+        },
         analytics: {
           sales: salesData,
           monthlyTrend: monthlySales,
@@ -405,6 +431,7 @@ const createProduct = async (req, res) => {
       cost,
       inventory,
       images,
+      image, // Support singular image field
       specifications,
       seo,
       tags,
@@ -413,8 +440,52 @@ const createProduct = async (req, res) => {
       discount,
       productType = "single",
       packageItems,
+      subcategory,
     } = req.body;
 
+    let finalCategory = category;
+    if (productType === "package") {
+      finalCategory = "Packages";
+    }
+
+    // Validate category and subcategory
+    let categoryDoc;
+    if (mongoose.Types.ObjectId.isValid(finalCategory)) {
+      categoryDoc = await Category.findById(finalCategory);
+    } else {
+      categoryDoc = await Category.findOne({ name: finalCategory });
+    }
+
+    // Auto-create "Packages" category if missing during package creation
+    if (!categoryDoc && productType === "package" && (finalCategory === "Packages" || finalCategory === "packages")) {
+      categoryDoc = await Category.create({
+        name: "Packages",
+        isActive: true,
+        createdBy: req.admin.adminId
+      });
+    }
+
+    if (!categoryDoc) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid category",
+      });
+    }
+
+    // Ensure we use the category name for storage
+    const categoryName = categoryDoc.name;
+
+    if (subcategory) {
+      const subcategoryExists = categoryDoc.subcategories.some(
+        (sub) => sub.name === subcategory
+      );
+      if (!subcategoryExists) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid subcategory for selected category",
+        });
+      }
+    }
 
     // Validate package items if product type is package
     if (productType === "package") {
@@ -443,21 +514,29 @@ const createProduct = async (req, res) => {
       }
     }
 
-    // Create product
+    // Map packageItems with stripped baseUrl before creating product
+    const finalPackageItems = (productType === "package" && packageItems)
+      ? packageItems.map(item => ({
+        ...item,
+        image: stripBaseUrl(item.image)
+      }))
+      : [];
+
+    // Create product instance
     const product = new Product({
       name,
       description,
-      category,
+      category: categoryName,
+      subcategory,
       price,
       cost,
       productType,
-      packageItems: productType === "package" ? packageItems : [],
+      packageItems: finalPackageItems,
       inventory: {
         quantity: inventory?.quantity || 0,
         lowStockAlert: inventory?.lowStockAlert || 10,
         trackQuantity: inventory?.trackQuantity !== false,
       },
-      images: images || [],
       specifications: specifications || {},
       seo: {
         metaTitle: seo?.metaTitle || name,
@@ -467,6 +546,19 @@ const createProduct = async (req, res) => {
       featured,
       createdBy: req.admin.adminId,
     });
+
+    // Handle images: Support both 'image' and 'images' fields
+    let processedImages = stripImageArray(images || image);
+
+    // If it's a package and no images provided, default to first package item's image
+    if (productType === "package" && processedImages.length === 0 && finalPackageItems.length > 0) {
+      const firstItemImage = finalPackageItems[0].image;
+      if (firstItemImage) {
+        processedImages = [firstItemImage];
+      }
+    }
+
+    product.images = processedImages;
 
     // Calculate package details if it's a package
     if (productType === "package") {
@@ -481,7 +573,17 @@ const createProduct = async (req, res) => {
         ? "Package created successfully"
         : "Product created successfully",
       data: {
-        product,
+        product: {
+          ...product.toObject(),
+          images: formatImageArray(req, product.images),
+          ...(product.productType === "package" &&
+            product.packageItems && {
+            packageItems: product.packageItems.map((item) => ({
+              ...item.toObject(),
+              image: formatImageUrl(req, item.image),
+            })),
+          }),
+        },
       },
     });
   } catch (error) {
@@ -540,11 +642,79 @@ const updateProduct = async (req, res) => {
           };
         } else if (key === "seo" && typeof updateData[key] === "object") {
           product.seo = { ...product.seo, ...updateData[key] };
+        } else if (key === "packageItems" && Array.isArray(updateData[key])) {
+          product.packageItems = updateData[key].map(item => ({
+            ...item,
+            image: stripBaseUrl(item.image)
+          }));
+        } else if (key === "images" || key === "image") {
+          // Handled separately below for robustness
         } else {
           product[key] = updateData[key];
         }
       }
     });
+
+    // Robust image update
+    if (updateData.images !== undefined || updateData.image !== undefined) {
+      let processedImages = stripImageArray(updateData.images || updateData.image);
+
+      // Keep existing images if update resulted in empty but old one exists? 
+      // No, usually update replaces. But for packages, we might want to ensure one exists.
+      if (product.productType === "package" && processedImages.length === 0) {
+        if (product.packageItems && product.packageItems.length > 0) {
+          const firstItemImage = product.packageItems[0].image;
+          if (firstItemImage) {
+            processedImages = [firstItemImage];
+          }
+        }
+      }
+      product.images = processedImages;
+    }
+
+    // Recalculate package details if it's a package and items were updated
+    if (product.productType === "package" && updateData.packageItems) {
+      await product.calculatePackageDetails();
+    }
+
+    // Validate category/subcategory if changed
+    if (updateData.category || updateData.subcategory || product.productType === "package") {
+      let newCategory = updateData.category || product.category;
+      const newSubcategory = updateData.subcategory !== undefined ? updateData.subcategory : product.subcategory;
+
+      if (product.productType === "package") {
+        newCategory = "Packages";
+      }
+
+      let categoryDoc;
+      if (mongoose.Types.ObjectId.isValid(newCategory)) {
+        categoryDoc = await Category.findById(newCategory);
+      } else {
+        categoryDoc = await Category.findOne({ name: newCategory });
+      }
+
+      if (!categoryDoc) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid category",
+        });
+      }
+
+      // Ensure we update with the name
+      product.category = categoryDoc.name;
+
+      if (newSubcategory) {
+        const subcategoryExists = categoryDoc.subcategories.some(
+          (sub) => sub.name === newSubcategory
+        );
+        if (!subcategoryExists) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid subcategory for this category",
+          });
+        }
+      }
+    }
 
     product.updatedAt = new Date();
     product.updatedBy = req.admin.adminId;
@@ -554,7 +724,17 @@ const updateProduct = async (req, res) => {
       success: true,
       message: "Product updated successfully",
       data: {
-        product,
+        product: {
+          ...product.toObject(),
+          images: formatImageArray(req, product.images),
+          ...(product.productType === "package" &&
+            product.packageItems && {
+            packageItems: product.packageItems.map((item) => ({
+              ...item.toObject(),
+              image: formatImageUrl(req, item.image),
+            })),
+          }),
+        },
       },
     });
   } catch (error) {
@@ -778,6 +958,14 @@ const bulkProductOperations = async (req, res) => {
 
             return {
               ...product.toObject(),
+              images: formatImageArray(req, product.images),
+              ...(product.productType === "package" &&
+                product.packageItems && {
+                packageItems: product.packageItems.map((item) => ({
+                  ...item.toObject(),
+                  image: formatImageUrl(req, item.image),
+                })),
+              }),
               sales: salesData[0] || { totalSold: 0, totalRevenue: 0 },
             };
           })
@@ -933,6 +1121,14 @@ const getLowStockAlerts = async (req, res) => {
     // Calculate restock urgency
     const productsWithUrgency = lowStockProducts.map((product) => ({
       ...product.toObject(),
+      images: formatImageArray(req, product.images),
+      ...(product.productType === "package" &&
+        product.packageItems && {
+        packageItems: product.packageItems.map((item) => ({
+          ...item.toObject(),
+          image: formatImageUrl(req, item.image),
+        })),
+      }),
       urgency: calculateRestockUrgency(
         product.inventory.quantity,
         product.inventory.lowStockAlert

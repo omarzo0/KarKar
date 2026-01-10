@@ -1,7 +1,7 @@
 // routes/admin/couponRoutes.js
 const express = require("express");
 const router = express.Router();
-const { adminAuth, checkPermission } = require("../../middleware/adminAuth");
+const { adminAuth } = require("../../middleware/adminAuth");
 const {
   validateCreateCoupon,
   validateUpdateCoupon,
@@ -34,16 +34,14 @@ router.post("/validate", validateValidateCoupon, validateCoupon);
 // Bulk operations
 router.patch(
   "/bulk-status",
-  checkPermission("canManageProducts"),
   validateBulkStatus,
   bulkUpdateStatus
 );
 
 // CRUD operations
-router.get("/", checkPermission("canViewAnalytics"), getAllCoupons);
+router.get("/", getAllCoupons);
 router.post(
   "/",
-  checkPermission("canManageProducts"),
   validateCreateCoupon,
   createCoupon
 );
@@ -51,32 +49,27 @@ router.post(
 // Single coupon operations
 router.get(
   "/:couponId",
-  checkPermission("canViewAnalytics"),
   validateCouponId,
   getCouponById
 );
 router.put(
   "/:couponId",
-  checkPermission("canManageProducts"),
   validateCouponId,
   validateUpdateCoupon,
   updateCoupon
 );
 router.delete(
   "/:couponId",
-  checkPermission("canManageProducts"),
   validateCouponId,
   deleteCoupon
 );
 router.patch(
   "/:couponId/toggle-status",
-  checkPermission("canManageProducts"),
   validateCouponId,
   toggleCouponStatus
 );
 router.get(
   "/:couponId/analytics",
-  checkPermission("canViewAnalytics"),
   validateCouponId,
   getCouponAnalytics
 );

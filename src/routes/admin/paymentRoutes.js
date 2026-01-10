@@ -1,7 +1,7 @@
 // routes/admin/paymentRoutes.js
 const express = require("express");
 const router = express.Router();
-const { adminAuth, requirePermission } = require("../../middleware/adminAuth");
+const { adminAuth } = require("../../middleware/adminAuth");
 
 const {
   validatePaymentId,
@@ -45,7 +45,6 @@ router.use(adminAuth);
 // Payment listing and statistics
 router.get(
   "/",
-  requirePermission("canManagePayments"),
   validatePaymentQuery,
   getAllPayments
 );
@@ -53,14 +52,12 @@ router.get(
 // Create payment
 router.post(
   "/",
-  requirePermission("canManagePayments"),
   validateCreatePayment,
   createPayment
 );
 
 router.get(
   "/statistics",
-  requirePermission("canViewAnalytics"),
   getPaymentStatistics
 );
 
@@ -69,14 +66,12 @@ router.get(
 // Get all payment methods
 router.get(
   "/methods",
-  requirePermission("canManagePayments"),
   getAllPaymentMethods
 );
 
 // Create payment method
 router.post(
   "/methods",
-  requirePermission("canManagePayments"),
   validateCreatePaymentMethod,
   createPaymentMethod
 );
@@ -84,7 +79,6 @@ router.post(
 // Reorder payment methods
 router.put(
   "/methods/reorder",
-  requirePermission("canManagePayments"),
   validateReorderPaymentMethods,
   reorderPaymentMethods
 );
@@ -92,14 +86,12 @@ router.put(
 // Get single payment method
 router.get(
   "/methods/:methodName",
-  requirePermission("canManagePayments"),
   getPaymentMethodByName
 );
 
 // Update payment method
 router.put(
   "/methods/:methodName",
-  requirePermission("canManagePayments"),
   validateUpdatePaymentMethod,
   updatePaymentMethod
 );
@@ -107,21 +99,18 @@ router.put(
 // Delete payment method
 router.delete(
   "/methods/:methodName",
-  requirePermission("canManagePayments"),
   deletePaymentMethod
 );
 
 // Toggle payment method status
 router.patch(
   "/methods/:methodName/toggle",
-  requirePermission("canManagePayments"),
   togglePaymentMethod
 );
 
 // Set default payment method
 router.patch(
   "/methods/:methodName/set-default",
-  requirePermission("canManagePayments"),
   setDefaultPaymentMethod
 );
 
@@ -129,7 +118,6 @@ router.patch(
 
 router.post(
   "/bulk",
-  requirePermission("canManagePayments"),
   validateBulkPaymentOperation,
   bulkPaymentOperation
 );
@@ -137,7 +125,6 @@ router.post(
 // Get payments by user
 router.get(
   "/user/:userId",
-  requirePermission("canManagePayments"),
   getPaymentsByUser
 );
 
@@ -145,14 +132,12 @@ router.get(
 
 router.get(
   "/:paymentId",
-  requirePermission("canManagePayments"),
   validatePaymentId,
   getPaymentById
 );
 
 router.put(
   "/:paymentId/status",
-  requirePermission("canManagePayments"),
   validatePaymentId,
   validateUpdatePaymentStatus,
   updatePaymentStatus
@@ -160,7 +145,6 @@ router.put(
 
 router.post(
   "/:paymentId/refund",
-  requirePermission("canManagePayments"),
   validatePaymentId,
   validateRefundPayment,
   refundPayment
@@ -168,14 +152,12 @@ router.post(
 
 router.post(
   "/:paymentId/confirm-cod",
-  requirePermission("canManagePayments"),
   validatePaymentId,
   confirmCODPayment
 );
 
 router.post(
   "/:paymentId/fail-cod",
-  requirePermission("canManagePayments"),
   validatePaymentId,
   failCODPayment
 );

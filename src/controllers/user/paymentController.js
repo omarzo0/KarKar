@@ -130,6 +130,14 @@ const processPayment = async (req, res) => {
       });
     }
 
+    // Check if payment method is COD
+    if (payment.paymentMethod === "cod" || payment.paymentMethod === "cash_on_delivery") {
+      return res.status(400).json({
+        success: false,
+        message: "Cash on delivery orders cannot be processed online. Order status will be updated by administrator upon collection.",
+      });
+    }
+
     // Process payment with payment gateway (simulated)
     const paymentResult = await processWithPaymentGateway(payment, paymentToken);
 
@@ -379,13 +387,13 @@ const getAvailablePaymentMethods = async (req, res) => {
         icon: method.icon,
         fees: method.fees
           ? {
-              type: method.fees.type,
-              value: method.fees.value,
-              calculated:
-                method.fees.type === "percentage"
-                  ? (amount * method.fees.value) / 100
-                  : method.fees.value,
-            }
+            type: method.fees.type,
+            value: method.fees.value,
+            calculated:
+              method.fees.type === "percentage"
+                ? (amount * method.fees.value) / 100
+                : method.fees.value,
+          }
           : null,
       }));
 
@@ -638,6 +646,192 @@ const retryPayment = async (req, res) => {
   }
 };
 
+// @desc    Process guest payment
+// @route   POST /api/user/payments/guest/:paymentId/process
+// @access  Public (Guest with email)
+const processGuestPayment = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        errors: errors.array(),
+      });
+    }
+
+    const { paymentId } = req.params;
+    const { paymentToken, email } = req.body;
+
+    const payment = await Payment.findById(paymentId).populate("orderId");
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment not found",
+      });
+    }
+
+    // Verify email matches
+    // Note: Validation middleware already checks this generally, but we double check here
+    const order = payment.orderId;
+    const paymentEmail = payment.customerEmail || order?.customer?.email;
+
+    if (!paymentEmail || paymentEmail.toLowerCase() !== email.toLowerCase()) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied to this payment",
+      });
+    }
+
+    // Check if payment is already processed
+    if (payment.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Payment is already ${payment.status}`,
+      });
+    }
+
+    // Check if payment method is COD
+    if (payment.paymentMethod === "cod" || payment.paymentMethod === "cash_on_delivery") {
+      return res.status(400).json({
+        success: false,
+        message: "Cash on delivery orders cannot be processed online. Order status will be updated by administrator upon collection.",
+      });
+    }
+
+    // Process payment with payment gateway (simulated)
+    const paymentResult = await processWithPaymentGateway(payment, paymentToken);
+
+    if (paymentResult.success) {
+      // Update payment status
+      payment.status = "completed";
+      payment.paymentDate = new Date();
+      payment.gatewayTransactionId = paymentResult.transactionId;
+      payment.gatewayResponse = paymentResult.response;
+
+      await payment.save();
+
+      // Update order payment status
+      await Order.findByIdAndUpdate(payment.orderId._id, {
+        paymentStatus: "paid",
+      });
+
+      // Create transaction record
+      const transaction = new Transaction({
+        paymentId: payment._id,
+        // No userId for guest
+        type: "sale",
+        amount: payment.amount,
+        currency: payment.currency,
+        gatewayTransactionId: paymentResult.transactionId,
+        gatewayResponse: paymentResult.response,
+        status: "success",
+        processedAt: new Date(),
+      });
+      await transaction.save();
+
+      res.json({
+        success: true,
+        message: "Payment processed successfully",
+        data: {
+          payment,
+          transaction: {
+            id: transaction._id,
+            gatewayTransactionId: transaction.gatewayTransactionId,
+          },
+        },
+      });
+    } else {
+      // Payment failed
+      payment.status = "failed";
+      payment.gatewayResponse = paymentResult.response;
+      payment.failureReason = paymentResult.error;
+      await payment.save();
+
+      // Create failed transaction record
+      const transaction = new Transaction({
+        paymentId: payment._id,
+        type: "sale",
+        amount: payment.amount,
+        currency: payment.currency,
+        gatewayTransactionId: paymentResult.transactionId || `FAILED_${Date.now()}`,
+        gatewayResponse: paymentResult.response,
+        status: "failed",
+        processedAt: new Date(),
+      });
+      await transaction.save();
+
+      res.status(400).json({
+        success: false,
+        message: "Payment processing failed",
+        error: paymentResult.error,
+        data: {
+          payment,
+          retryPossible: true,
+        },
+      });
+    }
+  } catch (error) {
+    console.error("Process guest payment error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while processing payment",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get guest payment by ID (Secured by email)
+// @route   GET /api/user/payments/guest/:paymentId
+// @access  Public (Guest with email)
+const getGuestPaymentById = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const { email } = req.query;
+
+    const payment = await Payment.findById(paymentId)
+      .populate("orderId", "orderNumber totals status shippingAddress customer");
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment not found",
+      });
+    }
+
+    // Verify email matches
+    const order = payment.orderId;
+    const paymentEmail = payment.customerEmail || order?.customer?.email;
+
+    if (!paymentEmail || !email || paymentEmail.toLowerCase() !== email.toLowerCase()) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied to this payment",
+      });
+    }
+
+    // Get related transactions
+    const transactions = await Transaction.find({ paymentId })
+      .sort({ createdAt: -1 })
+      .select("type amount status gatewayTransactionId processedAt");
+
+    res.json({
+      success: true,
+      data: {
+        payment,
+        transactions,
+      },
+    });
+  } catch (error) {
+    console.error("Get guest payment by ID error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching payment",
+      error: error.message,
+    });
+  }
+};
+
 // Helper functions
 const sanitizePaymentDetails = (paymentDetails, paymentMethod) => {
   const sanitized = { ...paymentDetails };
@@ -708,4 +902,6 @@ module.exports = {
   validatePaymentMethod,
   getPaymentByOrder,
   retryPayment,
+  processGuestPayment,
+  getGuestPaymentById,
 };

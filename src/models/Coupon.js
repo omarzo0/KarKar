@@ -30,7 +30,7 @@ const couponSchema = new mongoose.Schema(
     },
     discountValue: {
       type: Number,
-      required: function() {
+      required: function () {
         return this.discountType !== "free_shipping";
       },
       min: [0, "Discount value cannot be negative"],
@@ -60,6 +60,13 @@ const couponSchema = new mongoose.Schema(
         userId: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "User",
+          default: null
+        },
+        email: {
+          type: String,
+          lowercase: true,
+          trim: true,
+          default: null
         },
         usageCount: {
           type: Number,
@@ -244,7 +251,7 @@ couponSchema.statics.generateCode = async function (prefix = "MK") {
 };
 
 // Method to check if coupon can be used by a user
-couponSchema.methods.canBeUsedBy = async function (userId, cartTotal, cartItems) {
+couponSchema.methods.canBeUsedBy = async function (userId, cartTotal, cartItems, email = null) {
   // Check if coupon is valid
   if (!this.isValid) {
     return { valid: false, message: "Coupon is not valid or has expired" };
@@ -268,13 +275,22 @@ couponSchema.methods.canBeUsedBy = async function (userId, cartTotal, cartItems)
   }
 
   // Check per-customer usage limit
-  const userUsage = this.usedBy.find(
-    (u) => u.userId.toString() === userId.toString()
-  );
+  let userUsage;
+  if (userId) {
+    userUsage = this.usedBy.find(
+      (u) => u.userId && u.userId.toString() === userId.toString()
+    );
+  } else if (email) {
+    // If no userId, check by email (for guests)
+    userUsage = this.usedBy.find(
+      (u) => u.email === email.toLowerCase().trim()
+    );
+  }
+
   if (userUsage && userUsage.usageCount >= this.usageLimit.perCustomer) {
     return {
       valid: false,
-      message: "You have already used this coupon the maximum number of times",
+      message: "This coupon usage limit has been reached for your account/email",
     };
   }
 
@@ -359,19 +375,30 @@ couponSchema.methods.calculateDiscount = function (cartTotal, cartItems) {
 };
 
 // Method to record usage
-couponSchema.methods.recordUsage = async function (userId) {
+couponSchema.methods.recordUsage = async function (userId, email = null) {
   this.usageCount += 1;
 
-  const userUsageIndex = this.usedBy.findIndex(
-    (u) => u.userId.toString() === userId.toString()
-  );
+  let userUsageIndex = -1;
+  if (userId) {
+    userUsageIndex = this.usedBy.findIndex(
+      (u) => u.userId && u.userId.toString() === userId.toString()
+    );
+  } else if (email) {
+    userUsageIndex = this.usedBy.findIndex(
+      (u) => u.email === email.toLowerCase().trim()
+    );
+  }
 
   if (userUsageIndex > -1) {
     this.usedBy[userUsageIndex].usageCount += 1;
     this.usedBy[userUsageIndex].lastUsedAt = new Date();
+    if (!this.usedBy[userUsageIndex].userId && userId) {
+      this.usedBy[userUsageIndex].userId = userId;
+    }
   } else {
     this.usedBy.push({
-      userId,
+      userId: userId || null,
+      email: email ? email.toLowerCase().trim() : null,
       usageCount: 1,
       lastUsedAt: new Date(),
     });

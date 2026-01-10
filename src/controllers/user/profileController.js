@@ -1,6 +1,7 @@
 const User = require("../../models/User");
 const Order = require("../../models/Order");
 const { validationResult } = require("express-validator");
+const { formatImageUrl } = require("../../utils/imageHelper");
 
 // @desc    Get user profile
 // @route   GET /api/user/profile
@@ -44,6 +45,10 @@ const getUserProfile = async (req, res) => {
       data: {
         user: {
           ...user.toObject(),
+          profile: {
+            ...user.profile,
+            avatar: formatImageUrl(req, user.profile.avatar)
+          },
           statistics: stats,
         },
       },
@@ -126,7 +131,10 @@ const updateUserProfile = async (req, res) => {
       _id: user._id,
       username: user.username,
       email: user.email,
-      profile: user.profile,
+      profile: {
+        ...user.profile,
+        avatar: formatImageUrl(req, user.profile.avatar)
+      },
       address: user.address,
       preferences: user.preferences,
       createdAt: user.createdAt,
@@ -287,7 +295,7 @@ const uploadAvatar = async (req, res) => {
       success: true,
       message: "Profile picture updated successfully",
       data: {
-        avatar: user.profile.avatar,
+        avatar: formatImageUrl(req, user.profile.avatar),
       },
     });
   } catch (error) {
@@ -384,7 +392,6 @@ const getUserActivity = async (req, res) => {
 
     // In a real app, you might also include:
     // - Reviews written
-    // - Wishlist updates
     // - Password changes
     // - Profile updates
 
@@ -935,7 +942,7 @@ const toggleCompareProduct = async (req, res) => {
 
     res.json({
       success: true,
-      message: result.added 
+      message: result.added
         ? `${product.name} added to compare list`
         : `${product.name} removed from compare list`,
       data: {
@@ -946,7 +953,7 @@ const toggleCompareProduct = async (req, res) => {
     });
   } catch (error) {
     console.error("Toggle compare product error:", error);
-    
+
     if (error.message === "Compare list is full (max 4 products)") {
       return res.status(400).json({
         success: false,

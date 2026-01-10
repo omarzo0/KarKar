@@ -1,4 +1,5 @@
 const Banner = require("../../models/Banner");
+const { formatImageUrl } = require("../../utils/imageHelper");
 
 // Get active banners for home page
 const getBanners = async (req, res) => {
@@ -35,14 +36,23 @@ const getBanners = async (req, res) => {
     };
 
     banners.forEach((banner) => {
+      const formattedBanner = {
+        ...banner.toObject(),
+        image: formatImageUrl(req, banner.image),
+        mobileImage: formatImageUrl(req, banner.mobileImage)
+      };
       if (groupedBanners[banner.position]) {
-        groupedBanners[banner.position].push(banner);
+        groupedBanners[banner.position].push(formattedBanner);
       }
     });
 
     res.status(200).json({
       success: true,
-      data: position ? banners : groupedBanners,
+      data: position ? banners.map(b => ({
+        ...b.toObject(),
+        image: formatImageUrl(req, b.image),
+        mobileImage: formatImageUrl(req, b.mobileImage)
+      })) : groupedBanners,
     });
   } catch (error) {
     console.error("Get banners error:", error);
@@ -83,7 +93,11 @@ const getBannerById = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: banner,
+      data: {
+        ...banner.toObject(),
+        image: formatImageUrl(req, banner.image),
+        mobileImage: formatImageUrl(req, banner.mobileImage)
+      },
     });
   } catch (error) {
     console.error("Get banner by ID error:", error);

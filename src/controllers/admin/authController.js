@@ -53,7 +53,7 @@ const loginAdmin = async (req, res) => {
 
     // Generate JWT token
     const token = jwt.sign(
-      { adminId: admin._id, role: "admin", permissions: admin.permissions },
+      { adminId: admin._id, role: admin.role },
       process.env.JWT_SECRET,
       { expiresIn: "12h" } // Shorter expiry for admin
     );
@@ -64,7 +64,6 @@ const loginAdmin = async (req, res) => {
       username: admin.username,
       email: admin.email,
       profile: admin.profile,
-      permissions: admin.permissions,
       role: admin.role,
       lastLogin: admin.lastLogin,
     };
@@ -155,7 +154,6 @@ const updateAdminProfile = async (req, res) => {
       username: admin.username,
       email: admin.email,
       profile: admin.profile,
-      permissions: admin.permissions,
       role: admin.role,
       updatedAt: admin.updatedAt,
     };
@@ -269,7 +267,7 @@ const refreshToken = async (req, res) => {
 
     // Generate new token
     const token = jwt.sign(
-      { adminId: admin._id, role: "admin", permissions: admin.permissions },
+      { adminId: admin._id, role: admin.role },
       process.env.JWT_SECRET,
       { expiresIn: "12h" }
     );

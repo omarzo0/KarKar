@@ -19,6 +19,7 @@ app.use(
     credentials: true,
   })
 );
+// Force restart check
 
 // Rate limiting
 const limiter = rateLimit({
@@ -63,8 +64,10 @@ const userAuthRoutes = require("./src/routes/user/authRoutes");
 const userProfileRoutes = require("./src/routes/user/profileRoutes");
 const userOrderRoutes = require("./src/routes/user/orderRoutes");
 const userCartRoutes = require("./src/routes/user/cartRoutes");
-const userWishlistRoutes = require("./src/routes/user/wishlistRoutes");
 const userCategoryRoutes = require("./src/routes/user/categoryRoutes");
+const userPackageRoutes = require("./src/routes/user/packageRoutes");
+const userShippingFeeRoutes = require("./src/routes/user/shippingFeeRoutes");
+const userCouponRoutes = require("./src/routes/user/couponRoutes");
 
 // Admin Routes
 const adminAuthRoutes = require("./src/routes/admin/authRoutes");
@@ -85,6 +88,7 @@ const userBannerRoutes = require("./src/routes/user/bannerRoutes");
 
 // Shared Routes
 const sharedProductRoutes = require("./src/routes/shared/productRoutes");
+const uploadRoutes = require("./src/routes/shared/uploadRoutes");
 
 // ==================== API ROUTES REGISTRATION ====================
 
@@ -93,8 +97,10 @@ app.use("/api/auth", userAuthRoutes);
 app.use("/api/user/profile", userProfileRoutes);
 app.use("/api/user/orders", userOrderRoutes);
 app.use("/api/user/cart", userCartRoutes);
-app.use("/api/user/wishlist", userWishlistRoutes);
 app.use("/api/user/categories", userCategoryRoutes);
+app.use("/api/user/packages", userPackageRoutes);
+app.use("/api/user/shipping-fees", userShippingFeeRoutes);
+app.use("/api/user/coupons", userCouponRoutes);
 
 // Admin API Routes
 app.use("/api/admin/auth", adminAuthRoutes);
@@ -115,6 +121,7 @@ app.use("/api/user/banners", userBannerRoutes);
 
 // Shared API Routes
 app.use("/api/products", sharedProductRoutes);
+app.use("/api/upload", uploadRoutes);
 
 // ==================== PUBLIC ROUTES ====================
 
@@ -348,18 +355,12 @@ process.on("SIGTERM", gracefulShutdown);
 const startServer = async () => {
   await connectDB();
 
-  const PORT = process.env.PORT || 5000;
+  const PORT = process.env.PORT || 9000;
   const server = app.listen(PORT, () => {
     console.log(`🚀 Server is running on port ${PORT}`);
     console.log(`🌐 Environment: ${process.env.NODE_ENV || "development"}`);
     console.log(`📊 Health check: http://localhost:${PORT}/health`);
-    console.log("\n📁 Route Structure:");
-    console.log("   👤 User Routes: /api/auth/*, /api/user/*");
-    console.log("   👑 Admin Routes: /api/admin/*");
-    console.log("   🔗 Shared Routes: /api/products, /api/payments");
-    console.log(
-      "   🌐 Public Routes: /api/products/featured, /api/products/category/*"
-    );
+
   });
 
   // Handle server errors

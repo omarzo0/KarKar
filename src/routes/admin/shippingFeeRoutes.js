@@ -1,9 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const {
-    adminAuth,
-    requirePermission,
-} = require("../../middleware/adminAuth");
+const { adminAuth } = require("../../middleware/adminAuth");
 
 const {
     getAllShippingFees,
@@ -29,7 +26,6 @@ router.use(adminAuth);
 // Get all shipping fees
 router.get(
     "/",
-    requirePermission("canManageProducts"),
     validateGetShippingFees,
     getAllShippingFees
 );
@@ -37,7 +33,6 @@ router.get(
 // Get shipping fee by ID
 router.get(
     "/:id",
-    requirePermission("canManageProducts"),
     validateShippingFeeId,
     getShippingFeeById
 );
@@ -45,7 +40,6 @@ router.get(
 // Create new shipping fee
 router.post(
     "/",
-    requirePermission("canManageProducts"),
     validateCreateShippingFee,
     createShippingFee
 );
@@ -53,7 +47,6 @@ router.post(
 // Update shipping fee
 router.put(
     "/:id",
-    requirePermission("canManageProducts"),
     validateUpdateShippingFee,
     updateShippingFee
 );
@@ -61,7 +54,6 @@ router.put(
 // Delete shipping fee
 router.delete(
     "/:id",
-    requirePermission("canManageProducts"),
     validateShippingFeeId,
     deleteShippingFee
 );
@@ -69,7 +61,6 @@ router.delete(
 // Toggle shipping fee status
 router.patch(
     "/:id/toggle",
-    requirePermission("canManageProducts"),
     validateShippingFeeId,
     toggleShippingFeeStatus
 );

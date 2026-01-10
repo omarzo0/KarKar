@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 
 const adminSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
@@ -6,7 +7,7 @@ const adminSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: {
     type: String,
-    enum: ["admin"],
+    enum: ["admin", "superadmin"], // Added superadmin as it was used in middleware
     default: "admin",
   },
   profile: {

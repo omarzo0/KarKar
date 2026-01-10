@@ -1,128 +1,97 @@
-// controllers/admin/categoryController.js
 const Category = require("../../models/Category");
 const Product = require("../../models/Product");
 const { validationResult } = require("express-validator");
 const mongoose = require("mongoose");
+const { stripBaseUrl } = require("../../utils/imageHelper");
 
-// @desc    Get all categories with filtering and pagination
+// @desc    Get all categories
 // @route   GET /api/admin/categories
 // @access  Private (Admin)
 const getAllCategories = async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array(),
-      });
-    }
+    const { search, isActive } = req.query;
 
-    const {
-      page = 1,
-      limit = 50,
-      search,
-      isActive,
-      parent,
-      level,
-      tree = false,
-      sortBy = "displayOrder",
-      sortOrder = "asc",
-    } = req.query;
-
-    // If tree view requested, return hierarchical structure
-    if (tree === "true") {
-      const categoryTree = await Category.getCategoryTree({
-        includeInactive: isActive === "false" || isActive === undefined,
-      });
-
-      return res.json({
-        success: true,
-        data: {
-          categories: categoryTree,
-          totalCategories: categoryTree.length,
-        },
-      });
-    }
-
-    // Build filter
     const filter = {};
-
-    // Search filter
     if (search) {
-      filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { slug: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
-      ];
+      filter.name = { $regex: search, $options: "i" };
     }
-
-    // Active filter
     if (isActive !== undefined) {
       filter.isActive = isActive === "true";
     }
 
-    // Parent filter
-    if (parent === "null" || parent === "root") {
-      filter.parent = null;
-    } else if (parent) {
-      filter.parent = parent;
-    }
-
-    // Level filter
-    if (level !== undefined) {
-      filter.level = parseInt(level);
-    }
-
-    // Sort configuration
-    const sortConfig = {};
-    sortConfig[sortBy] = sortOrder === "asc" ? 1 : -1;
-
-    // Get categories with pagination
-    const categories = await Category.find(filter)
-      .populate("parent", "name slug")
-      .populate("createdBy", "username profile.firstName profile.lastName")
-      .sort(sortConfig)
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    // Get total count
-    const totalCategories = await Category.countDocuments(filter);
-
-    // Get category statistics
-    const categoryStats = await Category.aggregate([
+    // Use aggregation to get categories with real-time product counts
+    const categories = await Category.aggregate([
+      { $match: filter },
+      // Lookup products to get counts
       {
-        $group: {
-          _id: null,
-          totalCategories: { $sum: 1 },
-          activeCategories: {
-            $sum: { $cond: [{ $eq: ["$isActive", true] }, 1, 0] },
-          },
-          rootCategories: {
-            $sum: { $cond: [{ $eq: ["$parent", null] }, 1, 0] },
-          },
-          totalProducts: { $sum: "$statistics.productCount" },
+        $lookup: {
+          from: "products",
+          let: { categoryName: "$name" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$category", "$$categoryName"] },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                count: { $sum: 1 },
+                activeCount: {
+                  $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] },
+                },
+                sales: { $sum: "$sales.totalSold" },
+                revenue: { $sum: "$sales.totalRevenue" },
+              },
+            },
+          ],
+          as: "productStats",
         },
       },
+      // Lookup creator info
+      {
+        $lookup: {
+          from: "admins",
+          localField: "createdBy",
+          foreignField: "_id",
+          as: "creator",
+        },
+      },
+      {
+        $project: {
+          name: 1,
+          icon: 1,
+          isActive: 1,
+          showInMenu: 1,
+          showInHomepage: 1,
+          subcategories: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          createdBy: { $arrayElemAt: ["$creator", 0] },
+          statistics: {
+            productCount: {
+              $ifNull: [{ $arrayElemAt: ["$productStats.count", 0] }, 0],
+            },
+            activeProductCount: {
+              $ifNull: [{ $arrayElemAt: ["$productStats.activeCount", 0] }, 0],
+            },
+            totalSales: {
+              $ifNull: [{ $arrayElemAt: ["$productStats.sales", 0] }, 0],
+            },
+            totalRevenue: {
+              $ifNull: [{ $arrayElemAt: ["$productStats.revenue", 0] }, 0],
+            },
+          },
+        },
+      },
+      { $sort: { name: 1 } },
     ]);
 
     res.json({
       success: true,
       data: {
         categories,
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(totalCategories / limit),
-          totalCategories,
-          hasNext: page * limit < totalCategories,
-          hasPrev: page > 1,
-        },
-        statistics: categoryStats[0] || {
-          totalCategories: 0,
-          activeCategories: 0,
-          rootCategories: 0,
-          totalProducts: 0,
-        },
+        totalCategories: categories.length,
       },
     });
   } catch (error) {
@@ -150,13 +119,8 @@ const getCategoryById = async (req, res) => {
     }
 
     const category = await Category.findById(categoryId)
-      .populate("parent", "name slug")
       .populate("createdBy", "username profile.firstName profile.lastName")
-      .populate("updatedBy", "username profile.firstName profile.lastName")
-      .populate({
-        path: "children",
-        options: { sort: { displayOrder: 1 } },
-      });
+      .populate("updatedBy", "username profile.firstName profile.lastName");
 
     if (!category) {
       return res.status(404).json({
@@ -165,19 +129,9 @@ const getCategoryById = async (req, res) => {
       });
     }
 
-    // Get full breadcrumb path
-    const breadcrumb = await category.getFullPath();
-
-    // Get product count
-    const productCount = await Product.countDocuments({ category: category.name });
-
     res.json({
       success: true,
-      data: {
-        category,
-        breadcrumb,
-        productCount,
-      },
+      data: { category },
     });
   } catch (error) {
     console.error("Get category by ID error:", error);
@@ -205,20 +159,25 @@ const createCategory = async (req, res) => {
 
     const {
       name,
-      slug,
-      description,
-      parent,
-      image,
       icon,
-      displayOrder,
+      isActive,
       showInMenu,
       showInHomepage,
-      seo,
-      isActive,
-      attributes,
+      subcategories,
     } = req.body;
 
-    // Check if name already exists
+    let parsedSubcategories = subcategories;
+    if (typeof subcategories === "string") {
+      try {
+        parsedSubcategories = JSON.parse(subcategories);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid subcategories format",
+        });
+      }
+    }
+
     const existingCategory = await Category.findOne({
       name: { $regex: new RegExp(`^${name}$`, "i") },
     });
@@ -229,30 +188,16 @@ const createCategory = async (req, res) => {
       });
     }
 
-    // Validate parent if provided
-    if (parent) {
-      const parentCategory = await Category.findById(parent);
-      if (!parentCategory) {
-        return res.status(400).json({
-          success: false,
-          message: "Parent category not found",
-        });
-      }
-    }
-
     const category = new Category({
       name,
-      slug,
-      description,
-      parent: parent || null,
-      image,
-      icon,
-      displayOrder: displayOrder || 0,
+      icon: stripBaseUrl(icon) || "",
+      isActive: isActive !== undefined ? isActive : true,
       showInMenu: showInMenu !== undefined ? showInMenu : true,
       showInHomepage: showInHomepage || false,
-      seo,
-      isActive: isActive !== undefined ? isActive : true,
-      attributes,
+      subcategories: parsedSubcategories ? parsedSubcategories.map(sub => ({
+        ...sub,
+        icon: stripBaseUrl(sub.icon)
+      })) : [],
       createdBy: req.admin.adminId,
     });
 
@@ -290,6 +235,17 @@ const updateCategory = async (req, res) => {
     const { categoryId } = req.params;
     const updateData = req.body;
 
+    if (updateData.subcategories && typeof updateData.subcategories === "string") {
+      try {
+        updateData.subcategories = JSON.parse(updateData.subcategories);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid subcategories format",
+        });
+      }
+    }
+
     if (!mongoose.Types.ObjectId.isValid(categoryId)) {
       return res.status(400).json({
         success: false,
@@ -305,7 +261,7 @@ const updateCategory = async (req, res) => {
       });
     }
 
-    // Check if name is being changed and if new name exists
+    // If category name changes, update all products
     if (updateData.name && updateData.name !== category.name) {
       const existingCategory = await Category.findOne({
         name: { $regex: new RegExp(`^${updateData.name}$`, "i") },
@@ -318,45 +274,39 @@ const updateCategory = async (req, res) => {
         });
       }
 
-      // Update products with old category name to new name
       await Product.updateMany(
         { category: category.name },
         { $set: { category: updateData.name } }
       );
     }
 
-    // Validate parent if provided
-    if (updateData.parent) {
-      // Cannot set self as parent
-      if (updateData.parent === categoryId) {
-        return res.status(400).json({
-          success: false,
-          message: "Category cannot be its own parent",
-        });
-      }
-
-      const parentCategory = await Category.findById(updateData.parent);
-      if (!parentCategory) {
-        return res.status(400).json({
-          success: false,
-          message: "Parent category not found",
-        });
-      }
-
-      // Cannot set a descendant as parent
-      const descendants = await Category.getDescendants(categoryId);
-      if (descendants.some((d) => d._id.toString() === updateData.parent)) {
-        return res.status(400).json({
-          success: false,
-          message: "Cannot set a descendant category as parent",
-        });
+    // Check for subcategory name changes to update products
+    if (updateData.subcategories && Array.isArray(updateData.subcategories)) {
+      for (const oldSub of category.subcategories) {
+        const newSub = updateData.subcategories.find(s => s._id?.toString() === oldSub._id.toString());
+        if (newSub && newSub.name !== oldSub.name) {
+          // Subcategory name changed
+          await Product.updateMany(
+            { category: category.name, subcategory: oldSub.name },
+            { $set: { subcategory: newSub.name } }
+          );
+        }
       }
     }
 
-    // Update category
+    // Apply updates
     Object.keys(updateData).forEach((key) => {
       if (updateData[key] !== undefined) {
-        category[key] = updateData[key];
+        if (key === "icon") {
+          category[key] = stripBaseUrl(updateData[key]);
+        } else if (key === "subcategories" && Array.isArray(updateData[key])) {
+          category[key] = updateData[key].map(sub => ({
+            ...sub,
+            icon: stripBaseUrl(sub.icon)
+          }));
+        } else {
+          category[key] = updateData[key];
+        }
       }
     });
 
@@ -384,7 +334,6 @@ const updateCategory = async (req, res) => {
 const deleteCategory = async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const { moveProductsTo, moveChildrenTo } = req.query;
 
     if (!mongoose.Types.ObjectId.isValid(categoryId)) {
       return res.status(400).json({
@@ -401,43 +350,13 @@ const deleteCategory = async (req, res) => {
       });
     }
 
-    // Check for products in this category
+    // Check if products exist in this category
     const productCount = await Product.countDocuments({ category: category.name });
     if (productCount > 0) {
-      if (moveProductsTo) {
-        const targetCategory = await Category.findById(moveProductsTo);
-        if (!targetCategory) {
-          return res.status(400).json({
-            success: false,
-            message: "Target category for products not found",
-          });
-        }
-        await Product.updateMany(
-          { category: category.name },
-          { $set: { category: targetCategory.name } }
-        );
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: `Category has ${productCount} products. Provide moveProductsTo parameter to move products to another category.`,
-        });
-      }
-    }
-
-    // Check for child categories
-    const childCategories = await Category.find({ parent: categoryId });
-    if (childCategories.length > 0) {
-      if (moveChildrenTo) {
-        await Category.updateMany(
-          { parent: categoryId },
-          { $set: { parent: moveChildrenTo === "root" ? null : moveChildrenTo } }
-        );
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: `Category has ${childCategories.length} child categories. Provide moveChildrenTo parameter (or 'root') to move children.`,
-        });
-      }
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete category: ${productCount} products are still assigned to it.`,
+      });
     }
 
     await Category.findByIdAndDelete(categoryId);
@@ -462,13 +381,6 @@ const deleteCategory = async (req, res) => {
 const toggleCategoryStatus = async (req, res) => {
   try {
     const { categoryId } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(categoryId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid category ID",
-      });
-    }
 
     const category = await Category.findById(categoryId);
     if (!category) {
@@ -497,56 +409,12 @@ const toggleCategoryStatus = async (req, res) => {
   }
 };
 
-// @desc    Update category display order
-// @route   PATCH /api/admin/categories/reorder
-// @access  Private (Admin)
-const reorderCategories = async (req, res) => {
-  try {
-    const { categories } = req.body; // Array of { categoryId, displayOrder }
-
-    if (!Array.isArray(categories) || categories.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Please provide an array of categories with display orders",
-      });
-    }
-
-    const bulkOps = categories.map(({ categoryId, displayOrder }) => ({
-      updateOne: {
-        filter: { _id: categoryId },
-        update: { $set: { displayOrder, updatedBy: req.admin.adminId } },
-      },
-    }));
-
-    await Category.bulkWrite(bulkOps);
-
-    res.json({
-      success: true,
-      message: "Categories reordered successfully",
-    });
-  } catch (error) {
-    console.error("Reorder categories error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while reordering categories",
-      error: error.message,
-    });
-  }
-};
-
 // @desc    Get category statistics
 // @route   GET /api/admin/categories/:categoryId/statistics
 // @access  Private (Admin)
 const getCategoryStatistics = async (req, res) => {
   try {
     const { categoryId } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(categoryId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid category ID",
-      });
-    }
 
     const category = await Category.findById(categoryId);
     if (!category) {
@@ -556,51 +424,6 @@ const getCategoryStatistics = async (req, res) => {
       });
     }
 
-    // Get product statistics
-    const productStats = await Product.aggregate([
-      { $match: { category: category.name } },
-      {
-        $group: {
-          _id: null,
-          totalProducts: { $sum: 1 },
-          activeProducts: {
-            $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] },
-          },
-          totalStock: { $sum: "$inventory.quantity" },
-          totalValue: {
-            $sum: { $multiply: ["$price", "$inventory.quantity"] },
-          },
-          avgPrice: { $avg: "$price" },
-          minPrice: { $min: "$price" },
-          maxPrice: { $max: "$price" },
-        },
-      },
-    ]);
-
-    // Get sales statistics
-    const salesStats = await mongoose.model("Order").aggregate([
-      { $unwind: "$items" },
-      {
-        $lookup: {
-          from: "products",
-          localField: "items.productId",
-          foreignField: "_id",
-          as: "product",
-        },
-      },
-      { $unwind: "$product" },
-      { $match: { "product.category": category.name } },
-      {
-        $group: {
-          _id: null,
-          totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: "$items.subtotal" },
-          totalQuantity: { $sum: "$items.quantity" },
-        },
-      },
-    ]);
-
-    // Update category statistics
     await category.updateProductCount();
 
     res.json({
@@ -609,21 +432,7 @@ const getCategoryStatistics = async (req, res) => {
         category: {
           _id: category._id,
           name: category.name,
-          slug: category.slug,
-        },
-        products: productStats[0] || {
-          totalProducts: 0,
-          activeProducts: 0,
-          totalStock: 0,
-          totalValue: 0,
-          avgPrice: 0,
-          minPrice: 0,
-          maxPrice: 0,
-        },
-        sales: salesStats[0] || {
-          totalOrders: 0,
-          totalRevenue: 0,
-          totalQuantity: 0,
+          statistics: category.statistics,
         },
       },
     });
@@ -631,7 +440,7 @@ const getCategoryStatistics = async (req, res) => {
     console.error("Get category statistics error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while fetching category statistics",
+      message: "Server error while fetching statistics",
       error: error.message,
     });
   }
@@ -643,7 +452,6 @@ const getCategoryStatistics = async (req, res) => {
 const updateAllStatistics = async (req, res) => {
   try {
     await Category.updateAllStatistics();
-
     res.json({
       success: true,
       message: "All category statistics updated successfully",
@@ -652,7 +460,7 @@ const updateAllStatistics = async (req, res) => {
     console.error("Update all statistics error:", error);
     res.status(500).json({
       success: false,
-      message: "Server error while updating category statistics",
+      message: "Server error while updating statistics",
       error: error.message,
     });
   }
@@ -665,7 +473,6 @@ module.exports = {
   updateCategory,
   deleteCategory,
   toggleCategoryStatus,
-  reorderCategories,
   getCategoryStatistics,
   updateAllStatistics,
 };

@@ -159,11 +159,22 @@ const getAllTransactions = async (req, res) => {
 
     // Get transactions with pagination
     const transactions = await Transaction.find(filter)
-      .populate("paymentId", "orderId paymentMethod amount status")
+      .populate({
+        path: "paymentId",
+        select: "orderId paymentMethod amount status",
+        populate: {
+          path: "orderId",
+          select: "_id orderNumber customer" // explicitly selecting _id just in case
+        }
+      })
       .populate("userId", "username email profile")
       .sort(sortConfig)
       .limit(limit * 1)
       .skip((page - 1) * limit);
+
+    // console.log("Transactions fetched:", transactions.length);
+    // const sample = transactions[0];
+    // if (sample && sample.paymentId) console.log("Sample payment:", JSON.stringify(sample.paymentId.toObject()));
 
     const totalTransactions = await Transaction.countDocuments(filter);
 
@@ -190,10 +201,23 @@ const getAllTransactions = async (req, res) => {
 
     const summary = await Transaction.aggregate(summaryPipeline);
 
+    // Flatten the response to include order details at the top level if available
+    const flattenedTransactions = transactions.map(t => {
+      const tObj = t.toObject();
+      if (tObj.paymentId && tObj.paymentId.orderId) {
+        // Check if orderId is populated object or just ID
+        if (typeof tObj.paymentId.orderId === 'object') {
+          tObj.orderNumber = tObj.paymentId.orderId.orderNumber;
+          tObj.customer = tObj.paymentId.orderId.customer;
+        }
+      }
+      return tObj;
+    });
+
     res.json({
       success: true,
       data: {
-        transactions,
+        transactions: flattenedTransactions,
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(totalTransactions / limit),
@@ -542,7 +566,14 @@ const searchTransactions = async (req, res) => {
     }
 
     const transactions = await Transaction.find(filter)
-      .populate("paymentId", "orderId paymentMethod amount status")
+      .populate({
+        path: "paymentId",
+        select: "orderId paymentMethod amount status",
+        populate: {
+          path: "orderId",
+          select: "orderNumber customer"
+        }
+      })
       .populate("userId", "username email")
       .sort({ createdAt: -1 })
       .limit(limit * 1)
@@ -550,10 +581,22 @@ const searchTransactions = async (req, res) => {
 
     const total = await Transaction.countDocuments(filter);
 
+    // Flatten the response to include order details
+    const flattenedTransactions = transactions.map(t => {
+      const tObj = t.toObject();
+      if (tObj.paymentId && tObj.paymentId.orderId) {
+        if (typeof tObj.paymentId.orderId === 'object') {
+          tObj.orderNumber = tObj.paymentId.orderId.orderNumber;
+          tObj.customer = tObj.paymentId.orderId.customer;
+        }
+      }
+      return tObj;
+    });
+
     res.json({
       success: true,
       data: {
-        transactions,
+        transactions: flattenedTransactions,
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(total / limit),

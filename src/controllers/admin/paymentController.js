@@ -62,7 +62,9 @@ const getAllPayments = async (req, res) => {
       .sort(sortConfig)
       .limit(limit * 1)
       .skip((page - 1) * limit)
-      .populate("orderId", "orderNumber totals")
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate("orderId", "orderNumber totals customer")
       .populate("userId", "username email profile");
 
     const totalPayments = await Payment.countDocuments(filter);
@@ -98,10 +100,19 @@ const getAllPayments = async (req, res) => {
       },
     ]);
 
+    // Flatten payments to include customer details at the top level
+    const flattenedPayments = payments.map(p => {
+      const pObj = p.toObject();
+      if (pObj.orderId && pObj.orderId.customer) {
+        pObj.customer = pObj.orderId.customer;
+      }
+      return pObj;
+    });
+
     res.json({
       success: true,
       data: {
-        payments,
+        payments: flattenedPayments,
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(totalPayments / limit),

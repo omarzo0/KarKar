@@ -10,6 +10,8 @@ const {
   validatePaymentQuery,
   validatePaymentMethodCheck,
   validateOrderId,
+  validateGuestProcessPayment,
+  validateGuestPaymentId,
 } = require("../../validations/user/paymentValidation");
 
 const {
@@ -21,10 +23,25 @@ const {
   validatePaymentMethod,
   getPaymentByOrder,
   retryPayment,
+  processGuestPayment,
+  getGuestPaymentById,
 } = require("../../controllers/user/paymentController");
 
 // Public route - get available payment methods
 router.get("/methods", getAvailablePaymentMethods);
+
+// Guest payment routes (Public with email verification)
+router.post(
+  "/guest/:paymentId/process",
+  validateGuestProcessPayment,
+  processGuestPayment
+);
+
+router.get(
+  "/guest/:paymentId",
+  validateGuestPaymentId,
+  getGuestPaymentById
+);
 
 // User payment routes (require authentication)
 router.post("/", userAuth, validateCreatePayment, createPayment);
